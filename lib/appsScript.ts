@@ -168,7 +168,26 @@ async function fetchJsonOnce<T>(url: string, timeoutMs: number): Promise<T> {
   try {
     const res = await fetch(url, { signal: controller.signal, cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as T;
+
+    // Read as text first, then parse.
+    //
+    // Apps Script does not always answer with JSON: a deployment that is
+    // unavailable, still propagating, or hit while Google is rate-limiting
+    // returns an HTML error page — observed live from one storage account,
+    // where res.json() threw a bare SyntaxError that said nothing about the
+    // endpoint or the response. Parsing ourselves lets the failure name what
+    // actually arrived.
+    const body = await res.text();
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      const looksLikeHtml = /^\s*<(!doctype|html)/i.test(body);
+      throw new Error(
+        looksLikeHtml
+          ? 'Apps Script returned an HTML error page instead of JSON — the deployment may be unavailable or still propagating.'
+          : `Apps Script returned a non-JSON response (${body.slice(0, 80).replace(/\s+/g, ' ')}…)`
+      );
+    }
   } catch (err) {
     // AbortError's own message ("This operation was aborted") says nothing
     // about WHY, and it was surfacing raw in the storage cards. Name the cause.
@@ -290,7 +309,23 @@ function emptyStats(): StatsResponse {
  */
 export async function fetchQuota(acct: StorageAccountConfig): Promise<QuotaResponse & { label: string }> {
   try {
-    const data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 20_000);
+    // 45s, not 20s: one account measures 11-38s while the other nine answer in
+    // about two. Each card has its own Suspense boundary, so the slow one
+    // delays only itself — cutting it off at 20s turned a slow-but-working
+    // account into an "unreachable" card, which is worse information.
+    let data: QuotaResponse;
+    try {
+      data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 45_000);
+    } catch (first) {
+      // Google intermittently answers with an HTML error page; the same request
+      // usually succeeds moments later. Reads are safe to retry.
+      if (first instanceof Error && /HTML error page|non-JSON/.test(first.message)) {
+        await new Promise((r) => setTimeout(r, 800));
+        data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 45_000);
+      } else {
+        throw first;
+      }
+    }
     return { ...data, label: acct.label };
   } catch (err) {
     return {
