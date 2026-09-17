@@ -507,14 +507,14 @@ export function DeliveryTable() {
               where content genuinely stops fitting. */}
           <colgroup>
             <col className="w-[9%]" />{/* Media — 2 thumbs + overflow badge */}
-            <col className="w-[11%]" />{/* Tracking ID */}
+            <col className="w-[10%]" />{/* Tracking ID */}
             <col className="w-[8%]" />{/* Order */}
-            <col className="w-[11%]" />{/* Customer */}
-            <col className="w-[11%]" />{/* Status — longest labels in the row */}
+            <col className="w-[10%]" />{/* Customer */}
+            <col className="w-[9%]" />{/* Status — wraps rather than clipping */}
             <col className="w-[8%]" />{/* Status changed */}
-            <col className="w-[9%]" />{/* Drive account */}
+            <col className="w-[8%]" />{/* Drive account */}
             <col className="w-[8%]" />{/* Added */}
-            <col className="w-[7%]" />{/* Total */}
+            <col className="w-[6%]" />{/* Total */}
             <col />{/* Items — whatever remains */}
           </colgroup>
           <thead className="sticky top-0 z-10">
@@ -538,6 +538,14 @@ export function DeliveryTable() {
               // happened, but no order was ever matched to it. Every text cell
               // would otherwise render as a bare "—" with nothing saying why.
               const isUnmatched = !r.orderName && !r.deliveryStatus && !r.customerName;
+              // An order number recorded without a Shopify lookup: the Order
+              // column is filled but customer, items, price and status are all
+              // still empty. Three such rows exist live. Left unmarked they
+              // read as resolved while holding nothing, which is worse than an
+              // obviously unmatched row — you would never know to re-run
+              // repair on them.
+              const isUnverified =
+                !isUnmatched && Boolean(r.orderName) && !r.customerName && !r.deliveryStatus;
               // Selected, or the row whose media is open — both mean "this is the
               // one I'm looking at", so they share the highlight.
               const isSelected = selected === r.trackingId || viewingMedia?.trackingId === r.trackingId;
@@ -554,7 +562,9 @@ export function DeliveryTable() {
                         'bg-accent/[0.07] shadow-[inset_3px_0_0_0_theme(colors.accent)]'
                       : isUnmatched
                         ? 'bg-red/[0.03] hover:bg-raised'
-                        : 'hover:bg-raised'
+                        : isUnverified
+                          ? 'bg-amber/[0.04] hover:bg-raised'
+                          : 'hover:bg-raised'
                   }`}
                 >
                   <td className="px-3 py-2">
@@ -569,8 +579,18 @@ export function DeliveryTable() {
                   <td className="tabular whitespace-nowrap px-3 py-2 font-medium text-ink">{r.trackingId}</td>
                   <td className="px-3 py-2 text-ink">
                     {r.orderName ? (
-                      <span className="block truncate" title={r.orderName}>
-                        {r.orderName}
+                      <span className="flex flex-col leading-tight">
+                        <span className="truncate" title={r.orderName}>
+                          {r.orderName}
+                        </span>
+                        {isUnverified && (
+                          <span
+                            className="text-[10px] text-amber"
+                            title="Recorded without a Shopify lookup — customer, items and price are still missing. Run repairDeliveryRows() to fill them in."
+                          >
+                            unverified
+                          </span>
+                        )}
                       </span>
                     ) : isUnmatched ? (
                       <AssignOrder trackingId={r.trackingId} onAssigned={onAssigned} />
