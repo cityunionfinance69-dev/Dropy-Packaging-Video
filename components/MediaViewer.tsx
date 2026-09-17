@@ -187,7 +187,7 @@ export function MediaViewer({ row, onClose }: { row: DeliveryRow; onClose: () =>
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-[92vh] w-full max-w-4xl animate-scale-in flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-modal focus:outline-none"
+        className="flex max-h-[94vh] w-full max-w-5xl animate-scale-in flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-modal focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header — identity of the delivery, not of the media item. */}
@@ -222,7 +222,7 @@ export function MediaViewer({ row, onClose }: { row: DeliveryRow; onClose: () =>
         </div>
 
         {/* Stage */}
-        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-raised p-4">
+        <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-raised p-3 [max-height:58vh]">
           {count === 0 ? (
             <div className="px-6 py-12 text-center">
               <p className="text-sm text-muted">
