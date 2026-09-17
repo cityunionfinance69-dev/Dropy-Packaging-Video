@@ -198,3 +198,62 @@ export function orderMatches(orderName: string, query: string): boolean {
   if (qs.length > os.length) return false;
   return qs.every((seg, i) => seg === os[i]);
 }
+
+// ---------------------------------------------------------------------------
+// Line items
+//
+// The Items column holds a pipe-joined list of full marketplace product titles.
+// Measured across 469 live rows: the median cell is 212 characters and the
+// longest is 840, while 71% of deliveries contain only one or two items. So the
+// problem is never the item COUNT — it is that a single title like
+// "1x CeraVe Hydrating Facial Cleanser For Normal To Dry Skin With Hyaluronic
+// Acid And Ceramides 3 Fluid Ounce 87ml" is longer than any sane table cell.
+//
+// Splitting the string into structured items lets the table show a readable
+// product name plus a count, and keep the full text for the expanded view.
+// ---------------------------------------------------------------------------
+
+export type LineItem = { qty: number; title: string; raw: string };
+
+/** "1x CeraVe … | 2x L'Oreal …" -> structured items. */
+export function parseItems(items: string): LineItem[] {
+  if (!items) return [];
+  return items
+    .split('|')
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((raw) => {
+      const m = raw.match(/^(\d+)\s*x\s*(.*)$/i);
+      return m ? { qty: Number(m[1]), title: m[2].trim(), raw } : { qty: 1, title: raw, raw };
+    });
+}
+
+/**
+ * Identical products appear as repeated lines rather than a quantity — 7 live
+ * rows do this, one repeating the same supplement three times. Collapsing them
+ * turns three identical 90-character lines into "3x <title>".
+ */
+export function mergeItems(items: LineItem[]): LineItem[] {
+  const byTitle = new Map<string, LineItem>();
+  for (const item of items) {
+    const key = item.title.toLowerCase();
+    const seen = byTitle.get(key);
+    if (seen) seen.qty += item.qty;
+    else byTitle.set(key, { ...item });
+  }
+  return [...byTitle.values()];
+}
+
+/**
+ * Shorten a marketplace title to its recognisable head.
+ *
+ * These titles are keyword-stuffed: the brand and product sit in the first few
+ * words and everything after is specification. Cutting at a word boundary near
+ * `max` keeps what identifies the product and drops the padding.
+ */
+export function shortTitle(title: string, max = 42): string {
+  if (title.length <= max) return title;
+  const cut = title.slice(0, max);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…';
+}

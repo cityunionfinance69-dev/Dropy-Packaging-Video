@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeliveryRow } from '@/lib/appsScript';
 import { AssignOrder } from '@/components/AssignOrder';
+import { ItemsCell } from '@/components/ItemsCell';
 import { MediaCell } from '@/components/MediaCell';
 import { MediaViewer } from '@/components/MediaViewer';
 import { addedAt, formatDateTime, formatRelative, orderMatches, statusAt } from '@/lib/media';
@@ -505,13 +506,13 @@ export function DeliveryTable() {
               width that actually exists; the min-width is now only the point
               where content genuinely stops fitting. */}
           <colgroup>
-            <col className="w-[10%]" />{/* Media — 2 thumbs + overflow badge */}
+            <col className="w-[9%]" />{/* Media — 2 thumbs + overflow badge */}
             <col className="w-[11%]" />{/* Tracking ID */}
             <col className="w-[8%]" />{/* Order */}
             <col className="w-[11%]" />{/* Customer */}
             <col className="w-[11%]" />{/* Status — longest labels in the row */}
             <col className="w-[8%]" />{/* Status changed */}
-            <col className="w-[10%]" />{/* Drive account */}
+            <col className="w-[9%]" />{/* Drive account */}
             <col className="w-[8%]" />{/* Added */}
             <col className="w-[7%]" />{/* Total */}
             <col />{/* Items — whatever remains */}
@@ -631,15 +632,12 @@ export function DeliveryTable() {
                       );
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-muted">
-                    <button
-                      type="button"
-                      title={r.items}
-                      onClick={() => setExpandedItems(isExpanded ? null : r.trackingId)}
-                      className={`block w-full text-left ${isExpanded ? 'whitespace-normal' : 'truncate'} hover:text-ink`}
-                    >
-                      {r.items || '—'}
-                    </button>
+                  <td className="px-3 py-2 align-top text-muted">
+                    <ItemsCell
+                      items={r.items}
+                      expanded={isExpanded}
+                      onToggle={() => setExpandedItems(isExpanded ? null : r.trackingId)}
+                    />
                   </td>
                 </tr>
               );
