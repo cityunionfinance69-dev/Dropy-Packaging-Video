@@ -73,7 +73,11 @@ export type StatsResponse = {
 };
 
 function requireEnv(name: string): string {
-  const v = process.env[name];
+  // Trimmed because a value pasted into a hosting dashboard often carries a
+  // trailing newline or space, and an untrimmed URL or key silently corrupts
+  // every request built from it — a 404 or 401 that looks like a broken
+  // endpoint rather than a stray character.
+  const v = process.env[name]?.trim();
   if (!v) throw new Error(`Missing required env var: ${name}`);
   return v;
 }
@@ -83,9 +87,57 @@ function requireEnv(name: string): string {
 export function getStorageAccounts(): StorageAccountConfig[] {
   const raw = process.env.DROPPY_STORAGE_ACCOUNTS;
   if (!raw) return [];
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) throw new Error('DROPPY_STORAGE_ACCOUNTS must be a JSON array');
-  return parsed;
+
+  // Pasting a 1.5KB JSON array into a hosting dashboard's env-var box goes
+  // wrong in predictable ways, and a bare JSON.parse turns every one of them
+  // into an unhandled SyntaxError that takes down the whole page render —
+  // observed in production as "Unexpected non-whitespace character after JSON
+  // at position 1480", i.e. the array parsed fine and something followed it on
+  // a second line.
+  //
+  // Normalising first fixes the three common cases:
+  //   * the textarea appended a newline, or the value was pasted with trailing
+  //     commentary after it
+  //   * the whole value got wrapped in quotes, the way it appears in a .env file
+  //   * smart quotes, if it travelled through a document or chat app
+  let text = raw.trim();
+
+  // Strip wrapping quotes only when they enclose the entire value.
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim();
+  }
+
+  // Keep only the outermost array. Anything after the closing bracket is
+  // paste debris, and anything before it is a stray prefix.
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start !== -1 && end > start) text = text.slice(start, end + 1);
+
+  // Curly quotes are never valid JSON but survive a copy through a doc or chat.
+  text = text.replace(/[\u201c\u201d]/g, '"').replace(/[\u2018\u2019]/g, "'");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    // A thrown SyntaxError here previously crashed the page. Report the
+    // misconfiguration and let the dashboard render without storage cards —
+    // the delivery table and sheet health do not depend on this value.
+    console.error('DROPPY_STORAGE_ACCOUNTS is not valid JSON:', err);
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) {
+    console.error('DROPPY_STORAGE_ACCOUNTS must be a JSON array; got', typeof parsed);
+    return [];
+  }
+
+  // Drop entries missing the two fields every caller needs, rather than letting
+  // an undefined url become the string "undefined" in a fetch.
+  return parsed.filter(
+    (a): a is StorageAccountConfig =>
+      Boolean(a) && typeof a === 'object' && typeof (a as StorageAccountConfig).url === 'string'
+  );
 }
 
 /** Generic fetch-JSON-from-Apps-Script with a timeout and one retry.

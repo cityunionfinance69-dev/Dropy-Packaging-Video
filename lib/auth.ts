@@ -88,9 +88,12 @@ export async function verifySessionToken(token: string | undefined, secret: stri
  */
 export function authConfig(): { password?: string; secret?: string } {
   return {
-    password: process.env.DASHBOARD_PASSWORD,
+    // Trimmed for the same reason as requireEnv: a newline picked up while
+    // pasting into a hosting dashboard would make the correct password fail
+    // to match, with nothing on screen to explain why.
+    password: process.env.DASHBOARD_PASSWORD?.trim(),
     // Falling back to the password as the signing key keeps setup to one env
     // var. It is still never sent to the browser — only HMACs of it are.
-    secret: process.env.SESSION_SECRET || process.env.DASHBOARD_PASSWORD
+    secret: process.env.SESSION_SECRET?.trim() || process.env.DASHBOARD_PASSWORD?.trim()
   };
 }
