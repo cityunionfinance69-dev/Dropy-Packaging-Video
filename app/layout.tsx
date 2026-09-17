@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 import { SidebarNav } from '@/components/SidebarNav';
+import { SignOutButton } from '@/components/SignOutButton';
 import './globals.css';
 
 // next/font downloads and self-hosts these at build time — no external request
@@ -50,6 +51,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
             <SidebarNav />
+            {/* Pushed to the foot of the rail so it never sits among the
+                navigation items — signing out is not somewhere you go. */}
+            <div className="md:mt-auto">
+              <SignOutButton />
+            </div>
           </div>
         </aside>
         <main className="min-w-0 flex-1 px-4 py-5 md:px-6 md:py-6">{children}</main>
