@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeliveryRow } from '@/lib/appsScript';
 import { AssignOrder } from '@/components/AssignOrder';
+import { CopyValue } from '@/components/CopyValue';
 import { ItemsCell } from '@/components/ItemsCell';
 import { MediaCell } from '@/components/MediaCell';
 import { MediaViewer } from '@/components/MediaViewer';
@@ -576,13 +577,13 @@ export function DeliveryTable() {
                       }}
                     />
                   </td>
-                  <td className="tabular whitespace-nowrap px-3 py-2 font-medium text-ink">{r.trackingId}</td>
+                  <td className="tabular px-3 py-2 font-medium text-ink">
+                    <CopyValue value={r.trackingId} title="Tracking ID" />
+                  </td>
                   <td className="px-3 py-2 text-ink">
                     {r.orderName ? (
                       <span className="flex flex-col leading-tight">
-                        <span className="truncate" title={r.orderName}>
-                          {r.orderName}
-                        </span>
+                        <CopyValue value={r.orderName} title="Order" className="text-ink" />
                         {isUnverified && (
                           <span
                             className="text-[10px] text-amber"
@@ -599,7 +600,11 @@ export function DeliveryTable() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-muted">
-                    {r.customerName || <span className="text-faint">—</span>}
+                    {r.customerName ? (
+                      <CopyValue value={r.customerName} title="Customer" />
+                    ) : (
+                      <span className="text-faint">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <StatusBadge status={r.deliveryStatus} />

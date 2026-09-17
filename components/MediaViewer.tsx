@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DeliveryRow } from '@/lib/appsScript';
+import { CopyValue } from '@/components/CopyValue';
 import {
   addedAt,
   driveThumb,
@@ -202,7 +203,9 @@ export function MediaViewer({ row, onClose }: { row: DeliveryRow; onClose: () =>
         {/* Header — identity of the delivery, not of the media item. */}
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-3">
           <div className="min-w-0">
-            <h2 className="tabular truncate text-sm font-semibold text-ink">{row.trackingId}</h2>
+            <h2 className="tabular truncate text-sm font-semibold text-ink">
+              <CopyValue value={row.trackingId} title="Tracking ID" />
+            </h2>
             <p className="mt-0.5 truncate text-xs text-muted">
               {row.orderName || 'no order name'}
               {row.customerName && <span className="text-faint"> · {row.customerName}</span>}
