@@ -26,37 +26,46 @@ function PhotoStage({ item }: { item: MediaItem }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  // Click to zoom. This view exists to settle "was the right thing in the box",
+  // and the answer often sits in small print — a shipping label, a barcode, a
+  // batch code — which is unreadable when the whole photo is fitted to the
+  // panel. Zoomed, the image renders at natural size and the container scrolls,
+  // so the label can be read rather than squinted at.
+  const [zoomed, setZoomed] = useState(false);
+
   if (!item.driveId) return null;
 
+  if (failed) {
+    return (
+      <div className="px-6 text-center">
+        <p className="text-sm text-muted">This image couldn&apos;t be loaded from Drive.</p>
+        <a
+          href={`https://drive.google.com/file/d/${item.driveId}/view`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-block text-xs text-accent hover:underline"
+        >
+          Open in Drive →
+        </a>
+      </div>
+    );
+  }
+
   return (
-    <div className="relative flex h-full w-full items-center justify-center">
-      {!loaded && !failed && (
-        <div className="absolute inset-0 animate-pulse rounded bg-raised" aria-hidden />
-      )}
-      {failed ? (
-        <div className="px-6 text-center">
-          <p className="text-sm text-muted">This image couldn&apos;t be loaded from Drive.</p>
-          <a
-            href={`https://drive.google.com/file/d/${item.driveId}/view`}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-block text-xs text-accent hover:underline"
-          >
-            Open in Drive →
-          </a>
-        </div>
-      ) : (
-        /* eslint-disable-next-line @next/next/no-img-element */
-        <img
-          src={driveThumb(item.driveId, 1400)}
-          alt={item.label}
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
-          className={`max-h-full max-w-full rounded object-contain transition-opacity duration-200 ${
-            loaded ? 'opacity-100' : 'opacity-0'
-          }`}
-        />
-      )}
+    <div className={`relative h-full w-full ${zoomed ? 'overflow-auto' : 'flex items-center justify-center'}`}>
+      {!loaded && <div className="absolute inset-0 animate-pulse rounded bg-raised" aria-hidden />}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={driveThumb(item.driveId, 1600)}
+        alt={item.label}
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+        onClick={() => setZoomed((z) => !z)}
+        title={zoomed ? 'Click to fit' : 'Click to zoom'}
+        className={`rounded transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'} ${
+          zoomed ? 'max-w-none cursor-zoom-out' : 'max-h-full max-w-full cursor-zoom-in object-contain'
+        }`}
+      />
     </div>
   );
 }
@@ -187,7 +196,7 @@ export function MediaViewer({ row, onClose }: { row: DeliveryRow; onClose: () =>
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-[94vh] w-full max-w-5xl animate-scale-in flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-modal focus:outline-none"
+        className="flex h-[94vh] w-full max-w-6xl animate-scale-in flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-modal focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header — identity of the delivery, not of the media item. */}
@@ -222,7 +231,7 @@ export function MediaViewer({ row, onClose }: { row: DeliveryRow; onClose: () =>
         </div>
 
         {/* Stage */}
-        <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-raised p-3 [max-height:58vh]">
+        <div className="relative flex min-h-[18rem] flex-1 shrink items-center justify-center overflow-hidden bg-raised p-3">
           {count === 0 ? (
             <div className="px-6 py-12 text-center">
               <p className="text-sm text-muted">
