@@ -134,15 +134,31 @@ const DATE_RANGE_OPTIONS = [
   { value: '30', label: 'Last 30 days' }
 ] as const;
 
-async function fetchDeliveries(offset: number, limit: number): Promise<{
+async function fetchDeliveries(
+  offset: number,
+  limit: number,
+  q = ''
+): Promise<{
   rows: DeliveryRow[];
   hasMore: boolean;
   totalRows: number;
+  /** Rows the query can page through — the match count when q was applied. */
+  matchCount?: number;
+  /** True when the server filtered rather than returning a plain page. */
+  searched?: boolean;
 }> {
-  const res = await fetch(`/api/deliveries?offset=${offset}&limit=${limit}`);
+  const res = await fetch(
+    `/api/deliveries?offset=${offset}&limit=${limit}` + (q ? `&q=${encodeURIComponent(q)}` : '')
+  );
   const data = await res.json();
   if (!data.success) throw new Error(data.error ?? 'Failed to load');
-  return { rows: data.rows, hasMore: data.hasMore, totalRows: data.totalRows };
+  return {
+    rows: data.rows,
+    hasMore: data.hasMore,
+    totalRows: data.totalRows,
+    matchCount: data.matchCount,
+    searched: data.searched
+  };
 }
 
 // One retry on failure — measured against the live endpoint: firing all
@@ -202,19 +218,43 @@ export function DeliveryTable() {
   // across to the Items column is the easiest mistake to make here.
   const [selected, setSelected] = useState<string | null>(null);
 
-  const hasActiveFilters = Boolean(query || statusFilter !== 'all' || accountFilter !== 'all' || dateRange !== 'all');
+  // A typed query is now answered by the SERVER, which scans the sheet once and
+  // returns only matches (~3s). It used to be answered by downloading all 2,528
+  // rows in 500-row chunks at ~5s each, so a search took 15-25 seconds and
+  // showed "no match yet" for most of it.
+  //
+  // The dropdowns still filter in memory, because they operate on whatever set
+  // is on screen — including a set the server just searched.
+  const trimmedQuery = query.trim();
 
-  // BROWSE fetch — only runs while no filter is active.
+  // Debounced so a query is sent once the operator stops typing, not on every
+  // keystroke: a 12-character tracking number would otherwise fire 12 scans of
+  // the whole sheet.
+  const [activeQuery, setActiveQuery] = useState('');
   useEffect(() => {
-    if (hasActiveFilters) return;
+    const id = setTimeout(() => setActiveQuery(trimmedQuery), 350);
+    return () => clearTimeout(id);
+  }, [trimmedQuery]);
+
+  const hasDropdownFilters = statusFilter !== 'all' || accountFilter !== 'all' || dateRange !== 'all';
+  const hasActiveFilters = Boolean(trimmedQuery || hasDropdownFilters);
+
+  // Paged fetch. Serves plain browsing AND a typed search — the only difference
+  // is whether `q` goes along, and the server pages the matches the same way it
+  // pages the sheet. The whole-sheet download only survives for the dropdown
+  // filters below.
+  useEffect(() => {
+    if (hasDropdownFilters) return;
     let cancelled = false;
     setBrowseLoading(true);
-    fetchDeliveries(browsePage * BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE)
+    fetchDeliveries(browsePage * BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE, activeQuery)
       .then((data) => {
         if (cancelled) return;
         setBrowseRows(data.rows);
         setBrowseHasMore(data.hasMore);
-        setBrowseTotal(data.totalRows);
+        // When searching, pagination counts MATCHES; the sheet total stays in
+        // the stat tiles where it belongs.
+        setBrowseTotal(data.searched ? (data.matchCount ?? data.rows.length) : data.totalRows);
         setError(null);
       })
       .catch((err) => !cancelled && setError(String(err)))
@@ -222,7 +262,7 @@ export function DeliveryTable() {
     return () => {
       cancelled = true;
     };
-  }, [browsePage, hasActiveFilters]);
+  }, [browsePage, hasDropdownFilters, activeQuery]);
 
   // SEARCH fetch — kicks in the moment a filter becomes active, and pulls
   // everything in SEARCH_FETCH_CHUNK-row calls until the whole sheet is in
@@ -238,9 +278,17 @@ export function DeliveryTable() {
   // exactly 2 of 4 chunks). A ref tracks "a fetch for this filter session has
   // started" without being a reactive dependency, so streaming progress in no
   // longer restarts/cancels the effect that's doing the streaming.
+  // A new query restarts paging: staying on page 7 would ask the server for a
+  // page the new result set may not have.
+  useEffect(() => {
+    setBrowsePage(0);
+  }, [activeQuery]);
+
   const searchSessionStarted = useRef(false);
   useEffect(() => {
-    if (!hasActiveFilters) {
+    // Only the dropdowns need every row. A typed query is answered by the
+    // server, so it no longer triggers this download.
+    if (!hasDropdownFilters) {
       searchSessionStarted.current = false;
       return;
     }
@@ -290,21 +338,21 @@ export function DeliveryTable() {
     return () => {
       cancelled = true;
     };
-  }, [hasActiveFilters]);
+  }, [hasDropdownFilters]);
 
   // Once every filter clears, drop the full copy so idle browsing goes back
   // to cheap paged fetches instead of holding the whole sheet in memory.
   useEffect(() => {
-    if (!hasActiveFilters && allRows.length > 0) {
+    if (!hasDropdownFilters && allRows.length > 0) {
       setAllRows([]);
       setSearchTotal(null);
       setSearchPage(0);
     }
-  }, [hasActiveFilters, allRows.length]);
+  }, [hasDropdownFilters, allRows.length]);
 
   // Distinct statuses/accounts for the filter dropdowns — sourced from
   // whichever rows are currently in memory (browse page or full search set).
-  const optionSource = hasActiveFilters ? allRows : browseRows;
+  const optionSource = hasDropdownFilters ? allRows : browseRows;
   const statusOptions = useMemo(
     () => Array.from(new Set(optionSource.map((r) => r.deliveryStatus).filter(Boolean))).sort(),
     [optionSource]
@@ -315,7 +363,9 @@ export function DeliveryTable() {
   );
 
   const filtered = useMemo(() => {
-    if (!hasActiveFilters) return browseRows;
+    // No dropdowns: the server already returned exactly the rows to show,
+    // searched or not.
+    if (!hasDropdownFilters) return browseRows;
     const q = query.trim().toLowerCase();
     const rangeDays = dateRange === 'all' ? null : Number(dateRange);
     const cutoff = rangeDays ? Date.now() - rangeDays * 24 * 60 * 60 * 1000 : null;
@@ -349,13 +399,13 @@ export function DeliveryTable() {
       }
       return true;
     });
-  }, [hasActiveFilters, browseRows, allRows, query, statusFilter, accountFilter, dateRange]);
+  }, [hasDropdownFilters, browseRows, allRows, query, statusFilter, accountFilter, dateRange]);
 
   // In search mode, paginate the (already filtered) in-memory results at the
   // same page size browse mode uses, so the table always shows ~20 rows.
   const searchPageCount = Math.max(1, Math.ceil(filtered.length / BROWSE_PAGE_SIZE));
   const clampedSearchPage = Math.min(searchPage, searchPageCount - 1);
-  const pageRows = hasActiveFilters
+  const pageRows = hasDropdownFilters
     ? filtered.slice(clampedSearchPage * BROWSE_PAGE_SIZE, (clampedSearchPage + 1) * BROWSE_PAGE_SIZE)
     : filtered;
 
@@ -395,7 +445,7 @@ export function DeliveryTable() {
   // landed and didn't contain a match yet — even though the background fetch
   // was still running and hadn't seen the rest of the sheet. searchLoading
   // alone is the correct signal for "the full-dataset fetch isn't done yet".
-  const isSearchStillLoading = hasActiveFilters && searchLoading;
+  const isSearchStillLoading = hasDropdownFilters && searchLoading;
 
   return (
     <div>
@@ -477,7 +527,7 @@ export function DeliveryTable() {
           its own) — measured at ~5s per 500-row chunk against the live endpoint,
           so ~10-15s for 2.5k rows. A determinate bar makes that wait legible
           instead of looking hung, and matches stream in as chunks land. */}
-      {hasActiveFilters && searchLoading && (
+      {hasDropdownFilters && searchLoading && (
         <div className="mt-2">
           <div className="tabular flex items-center justify-between text-xs text-muted">
             <span>
@@ -671,7 +721,7 @@ export function DeliveryTable() {
                 shaped placeholder tells you the table is coming and stops the
                 page height from jumping when rows land. A bare "Loading…" in
                 an empty frame did neither. */}
-            {pageRows.length === 0 && (browseLoading && !hasActiveFilters) &&
+            {pageRows.length === 0 && browseLoading && !hasDropdownFilters &&
               Array.from({ length: 8 }).map((_, i) => (
                 <tr key={`sk-${i}`} className="border-b border-border last:border-0">
                   <td className="px-3 py-2">
@@ -688,7 +738,7 @@ export function DeliveryTable() {
                 </tr>
               ))}
 
-            {pageRows.length === 0 && !(browseLoading && !hasActiveFilters) && (
+            {pageRows.length === 0 && !(browseLoading && !hasDropdownFilters) && (
               <tr>
                 <td colSpan={10} className="px-3 py-12 text-center">
                   {isSearchStillLoading ? (
@@ -726,7 +776,7 @@ export function DeliveryTable() {
           search mode slices rows already in memory. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {(() => {
-          const inSearch = hasActiveFilters;
+          const inSearch = hasDropdownFilters;
           const page = inSearch ? clampedSearchPage : browsePage;
           const pageCount = inSearch
             ? searchPageCount

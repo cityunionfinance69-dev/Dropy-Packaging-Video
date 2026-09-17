@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   const limit = Number(req.nextUrl.searchParams.get('limit') ?? 200);
 
   try {
-    const data = await fetchDeliveries(offset, limit);
+    const data = await fetchDeliveries(offset, limit, req.nextUrl.searchParams.get('q') ?? '');
     return NextResponse.json(data);
   } catch (err) {
     // Never let the raw error (which could contain env var contents) leak to the client.

@@ -32,6 +32,10 @@ export type DeliveryRow = {
 export type DeliveriesResponse = {
   success: boolean;
   totalRows: number;
+  /** Rows this query can page through — the match count when searching. */
+  matchCount?: number;
+  /** True when the server applied a search rather than returning a plain page. */
+  searched?: boolean;
   offset: number;
   limit: number;
   hasMore: boolean;
@@ -192,10 +196,12 @@ async function fetchJson<T>(url: string, timeoutMs = 30_000): Promise<T> {
   }
 }
 
-export async function fetchDeliveries(offset: number, limit: number): Promise<DeliveriesResponse> {
+export async function fetchDeliveries(offset: number, limit: number, q = ''): Promise<DeliveriesResponse> {
   const base = requireEnv('DROPPY_MAIN_URL');
   const key = requireEnv('DROPPY_ADMIN_KEY');
-  const url = `${base}?action=dashboardData&key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}`;
+  const url =
+    `${base}?action=dashboardData&key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}` +
+    (q ? `&q=${encodeURIComponent(q)}` : '');
   return fetchJson<DeliveriesResponse>(url);
 }
 
