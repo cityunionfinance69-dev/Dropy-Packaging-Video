@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-base text-ink antialiased;
+  }
+  ::selection {
+    @apply bg-accent/15 text-ink;
+  }
+  /* Visible keyboard focus — never remove this, only restyle it */
+  :focus-visible {
+    outline: 2px solid theme('colors.accent');
+    outline-offset: 2px;
+  }
+  /* On a light theme the browser's default form controls are already light,
+     but they inherit a bluish system tint that clashes with the palette.
+     Naming the scheme keeps native selects/scrollbars consistent. */
+  :root {
+    color-scheme: light;
+  }
+}
+
+/* Tabular figures for anything with numbers side by side (byte counts, dates) —
+   without this, "1" and "8" have different widths and columns of numbers jitter. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

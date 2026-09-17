@@ -1,0 +1,9 @@
+node_modules
+.next
+.env.local
+.vercel
+*.log
+
+# Local session state and build artefacts — machine-specific, not source.
+.claude/
+tsconfig.tsbuildinfo
