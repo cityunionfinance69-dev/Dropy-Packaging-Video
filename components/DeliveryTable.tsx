@@ -218,6 +218,31 @@ export function DeliveryTable() {
   // across to the Items column is the easiest mistake to make here.
   const [selected, setSelected] = useState<string | null>(null);
 
+  // Tracking IDs that have a dispatch scan.
+  //
+  // One call for the whole set, kept as a Set for O(1) lookup per row — a
+  // request per row would be ~20 two-sheet joins per page. Null until it
+  // arrives, which is distinct from "loaded and empty": before it lands no row
+  // can be called an audit gap, and claiming otherwise would flag every
+  // delivery on the page.
+  const [dispatchedIds, setDispatchedIds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/dispatch-ids')
+      .then((r) => r.json())
+      .then((d) => {
+        // An empty or absent Dispatch sheet is a normal first-run state, so a
+        // failure here leaves the column silent rather than showing an error
+        // on a page that is otherwise fine.
+        if (!cancelled && d.success) setDispatchedIds(new Set<string>(d.ids ?? []));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // A typed query is now answered by the SERVER, which scans the sheet once and
   // returns only matches (~3s). It used to be answered by downloading all 2,528
   // rows in 500-row chunks at ~5s each, so a search took 15-25 seconds and
@@ -549,7 +574,7 @@ export function DeliveryTable() {
       {error && <p className="mb-3 mt-3 text-sm text-red">{error}</p>}
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-panel shadow-card">
-        <table className="w-full min-w-[860px] table-fixed text-left text-sm lg:min-w-0">
+        <table className="w-full min-w-[940px] table-fixed text-left text-sm lg:min-w-0">
           {/* Proportional widths, not fixed pixels.
               Fixed px plus a 1240px min-width meant the table never fit the
               viewport, so it lived permanently inside a horizontal scroller
@@ -558,19 +583,21 @@ export function DeliveryTable() {
               where content genuinely stops fitting. */}
           <colgroup>
             <col className="w-[9%]" />{/* Media — 2 thumbs + overflow badge */}
-            <col className="w-[10%]" />{/* Tracking ID */}
+            <col className="w-[7%]" />{/* Dispatch — scanned out of the warehouse? */}
+            <col className="w-[9%]" />{/* Tracking ID */}
             <col className="w-[8%]" />{/* Order */}
-            <col className="w-[10%]" />{/* Customer */}
-            <col className="w-[9%]" />{/* Status — wraps rather than clipping */}
-            <col className="w-[8%]" />{/* Status changed */}
-            <col className="w-[8%]" />{/* Drive account */}
-            <col className="w-[8%]" />{/* Added */}
+            <col className="w-[9%]" />{/* Customer */}
+            <col className="w-[8%]" />{/* Status — wraps rather than clipping */}
+            <col className="w-[7%]" />{/* Status changed */}
+            <col className="w-[7%]" />{/* Drive account */}
+            <col className="w-[7%]" />{/* Added */}
             <col className="w-[6%]" />{/* Total */}
             <col />{/* Items — whatever remains */}
           </colgroup>
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-border bg-raised text-[11px] uppercase tracking-wide text-faint">
               <th className="px-3 py-2.5 font-medium">Media</th>
+              <th className="px-3 py-2.5 font-medium">Dispatch</th>
               <th className="px-3 py-2.5 font-medium">Tracking ID</th>
               <th className="px-3 py-2.5 font-medium">Order</th>
               <th className="px-3 py-2.5 font-medium">Customer</th>
@@ -618,6 +645,28 @@ export function DeliveryTable() {
                           : 'hover:bg-raised'
                   }`}
                 >
+                  <td className="px-3 py-2 align-top">
+                    {/* Three states, and the third is not "no": until the id
+                        set loads, nothing is known, and marking a row as an
+                        audit gap on missing data would flag every row. */}
+                    {dispatchedIds === null ? (
+                      <span className="inline-block h-3 w-10 animate-pulse rounded bg-raised" aria-hidden />
+                    ) : dispatchedIds.has(r.trackingId) ? (
+                      <span
+                        className="inline-block whitespace-nowrap rounded-full border border-teal/30 bg-teal/10 px-2 py-0.5 text-[11px] text-teal"
+                        title="Scanned out of the warehouse before delivery"
+                      >
+                        scanned
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-block whitespace-nowrap rounded-full border border-amber/40 bg-amber/10 px-2 py-0.5 text-[11px] text-amber"
+                        title="Delivered with no dispatch scan — the door scan was skipped, or a different label was scanned. A process gap, not a lost parcel."
+                      >
+                        no scan
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2">
                     <MediaCell
                       row={r}
@@ -727,11 +776,11 @@ export function DeliveryTable() {
                   <td className="px-3 py-2">
                     <div className="h-9 w-9 animate-pulse rounded bg-raised" />
                   </td>
-                  {Array.from({ length: 9 }).map((__, c) => (
+                  {Array.from({ length: 10 }).map((__, c) => (
                     <td key={c} className="px-3 py-2">
                       <div
                         className="h-3 animate-pulse rounded bg-raised"
-                        style={{ width: `${[70, 55, 60, 50, 65, 45, 60, 40, 80][c]}%` }}
+                        style={{ width: `${[40, 70, 55, 60, 50, 65, 45, 60, 40, 80][c]}%` }}
                       />
                     </td>
                   ))}
@@ -740,7 +789,7 @@ export function DeliveryTable() {
 
             {pageRows.length === 0 && !(browseLoading && !hasDropdownFilters) && (
               <tr>
-                <td colSpan={10} className="px-3 py-12 text-center">
+                <td colSpan={11} className="px-3 py-12 text-center">
                   {isSearchStillLoading ? (
                     <>
                       <div className="text-sm text-ink">Searching all deliveries…</div>

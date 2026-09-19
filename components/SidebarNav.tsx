@@ -31,6 +31,22 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
     )
   },
   {
+    href: '/dispatch',
+    label: 'Dispatch',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+        <path
+          d="M2.5 6.5h8v7h-8zM10.5 9h3.2l2.3 2.2v2.3h-5.5z"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+        <circle cx="6" cy="15" r="1.3" stroke="currentColor" strokeWidth="1.5" />
+        <circle cx="13.5" cy="15" r="1.3" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    )
+  },
+  {
     href: '/health',
     label: 'Health',
     icon: (

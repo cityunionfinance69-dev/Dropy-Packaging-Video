@@ -472,3 +472,159 @@ export async function fetchShopifyPing(): Promise<ShopifyPingResponse> {
     return { success: false };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch — what actually left the warehouse
+//
+// Every parcel is now scanned at the door, which gives the dashboard something
+// it could not show before. Previously a parcel only existed once it was
+// DELIVERED, so "never loaded onto the van" and "loaded and lost" were
+// indistinguishable — both simply absent. Joining dispatch scans against the
+// delivery log on tracking ID separates them:
+//
+//   dispatched + delivered      the happy path
+//   dispatched, not delivered   in flight, or lost — the queue worth chasing
+//   delivered, not dispatched   the door scan was skipped — an audit gap
+// ---------------------------------------------------------------------------
+
+export type DispatchRow = {
+  dispatchedAt: string;
+  trackingId: string;
+  batch: string;
+  orderName: string;
+  /** Parcel suffix stripped: "#Dropy-1642-1-1" -> "#Dropy-1642". */
+  baseOrder: string;
+  customerName: string;
+  items: string;
+  /** How the order was matched: shopify-tracking | velocity | app | unresolved. */
+  resolvedVia: string;
+  updatedAt: string;
+  /** Computed live against the delivery log, never stored. */
+  delivered: boolean;
+  /** True when the parcel left the building and nothing knows its order. */
+  unresolved: boolean;
+};
+
+export type DispatchSummary = {
+  dispatched: number;
+  delivered: number;
+  outstanding: number;
+  deliveredNotDispatched: number;
+};
+
+export type DispatchListResponse = {
+  success: boolean;
+  summary: DispatchSummary;
+  batch: string;
+  status: string;
+  searched: boolean;
+  matchCount: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  rows: DispatchRow[];
+  error?: string;
+};
+
+export type DispatchStatus = 'all' | 'outstanding' | 'delivered';
+
+const EMPTY_DISPATCH_SUMMARY: DispatchSummary = {
+  dispatched: 0,
+  delivered: 0,
+  outstanding: 0,
+  deliveredNotDispatched: 0
+};
+
+/**
+ * One page of dispatch scans.
+ *
+ * Never throws: the Dispatch tab is created by the Android app on first scan,
+ * so an empty or absent sheet is a NORMAL first-run state, not a failure. It
+ * resolves to an empty result the page can render as "nothing scanned out yet"
+ * rather than an error banner.
+ */
+export async function fetchDispatchList(opts: {
+  offset?: number;
+  limit?: number;
+  status?: DispatchStatus;
+  q?: string;
+  batch?: string;
+} = {}): Promise<DispatchListResponse> {
+  const { offset = 0, limit = 200, status = 'all', q = '', batch = '' } = opts;
+
+  const empty: DispatchListResponse = {
+    success: false,
+    summary: EMPTY_DISPATCH_SUMMARY,
+    batch,
+    status,
+    searched: Boolean(q),
+    matchCount: 0,
+    offset,
+    limit,
+    hasMore: false,
+    rows: []
+  };
+
+  try {
+    const base = requireEnv('DROPPY_MAIN_URL');
+    const key = requireEnv('DROPPY_ADMIN_KEY');
+    const url =
+      `${base}?action=dispatchList&key=${encodeURIComponent(key)}` +
+      `&offset=${offset}&limit=${limit}&status=${encodeURIComponent(status)}` +
+      (q ? `&q=${encodeURIComponent(q)}` : '') +
+      (batch ? `&batch=${encodeURIComponent(batch)}` : '');
+
+    // Joins two sheets at request time, so it is closer to the stats scan in
+    // cost than to a paged read.
+    const res = await fetchJson<DispatchListResponse>(url, 55_000);
+
+    // Apps Script answers HTTP 200 even for errors, so the body's success flag
+    // is the only thing that can be trusted. An undeployed action falls through
+    // route_()'s default and returns {status:'ok'} with no success field, which
+    // would otherwise read as a silent empty result.
+    if (typeof res.success !== 'boolean') {
+      return {
+        ...empty,
+        error:
+          'The dispatchList endpoint is not deployed — add Dispatch.gs to the main Apps Script project and re-deploy.'
+      };
+    }
+    if (!res.success) return { ...empty, error: res.error ?? 'dispatchList failed' };
+
+    return { ...res, summary: { ...EMPTY_DISPATCH_SUMMARY, ...(res.summary ?? {}) } };
+  } catch (err) {
+    return { ...empty, error: err instanceof Error ? err.message : 'Could not reach Apps Script' };
+  }
+}
+
+export type VelocityPingResponse = {
+  success: boolean;
+  httpCode?: number;
+  expires?: string;
+  daysLeft?: number;
+  /** Non-empty when the token expires within 14 days. */
+  warning?: string;
+  error?: string;
+};
+
+/**
+ * Is the Velocity credential alive, and how long until it expires?
+ *
+ * Takes no key — but it is still called from the server like every sibling,
+ * because "no auth required" is not "safe to expose in the browser", and
+ * routing one call differently from the rest is how an inconsistency becomes a
+ * habit.
+ *
+ * `warning` is the valuable field: an expiring token is a SCHEDULED outage,
+ * and the only upstream failure here that can be fixed before it happens.
+ */
+export async function fetchVelocityPing(): Promise<VelocityPingResponse> {
+  try {
+    const base = requireEnv('DROPPY_MAIN_URL');
+    const res = await fetchJsonOnce<VelocityPingResponse>(`${base}?action=velocityPing`, 20_000);
+    if (typeof res.success !== 'boolean') return { success: false, error: 'velocityPing is not deployed' };
+    return res;
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'unreachable' };
+  }
+}
