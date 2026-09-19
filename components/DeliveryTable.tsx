@@ -645,6 +645,15 @@ export function DeliveryTable() {
                           : 'hover:bg-raised'
                   }`}
                 >
+                  <td className="px-3 py-2">
+                    <MediaCell
+                      row={r}
+                      onOpen={(row) => {
+                        setSelected(row.trackingId);
+                        setViewingMedia(row);
+                      }}
+                    />
+                  </td>
                   <td className="px-3 py-2 align-top">
                     {/* Three states, and the third is not "no": until the id
                         set loads, nothing is known, and marking a row as an
@@ -666,15 +675,6 @@ export function DeliveryTable() {
                         no scan
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <MediaCell
-                      row={r}
-                      onOpen={(row) => {
-                        setSelected(row.trackingId);
-                        setViewingMedia(row);
-                      }}
-                    />
                   </td>
                   <td className="tabular px-3 py-2 font-medium text-ink">
                     <CopyValue value={r.trackingId} title="Tracking ID" />

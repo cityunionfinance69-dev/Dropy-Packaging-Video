@@ -253,11 +253,35 @@ export function DispatchTable({ initial }: { initial: DispatchListResponse }) {
                     <span className="flex flex-col leading-tight">
                       <span className="whitespace-nowrap text-muted">{stamp.date}</span>
                       <span className="text-[10px] text-faint">{stamp.relative}</span>
+                      {/* Only when the packing link resolved — blank on older
+                          rows, which predate the Dispatched At column. */}
+                      {typeof r.hoursWaiting === 'number' && (
+                        <span
+                          className="text-[10px] text-faint"
+                          title={r.packedAt ? `Packed ${r.packedAt}` : 'Time between packing and dispatch'}
+                        >
+                          waited {r.hoursWaiting < 1 ? '<1h' : `${Math.round(r.hoursWaiting)}h`}
+                        </span>
+                      )}
                     </span>
                   </td>
 
                   <td className="tabular px-3 py-2.5 font-medium text-ink">
-                    <CopyValue value={r.trackingId} title="Tracking ID" />
+                    <span className="flex flex-col items-start gap-0.5">
+                      <CopyValue value={r.trackingId} title="Tracking ID" />
+                      {r.split && (
+                        <span
+                          className="rounded border border-violet/30 bg-violet/10 px-1 py-px text-[10px] font-medium text-violet"
+                          title={
+                            r.parcelsInOrder
+                              ? `One of ${r.parcelsInOrder} parcels in this order — the items shown are what is in THIS box`
+                              : 'One box of a multi-parcel order — the items shown are what is in this box'
+                          }
+                        >
+                          split{r.parcelsInOrder ? ` 1/${r.parcelsInOrder}` : ''}
+                        </span>
+                      )}
+                    </span>
                   </td>
 
                   <td className="px-3 py-2.5 text-ink">

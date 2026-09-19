@@ -39,6 +39,33 @@ async function DispatchView() {
         />
       </div>
 
+      {/* Second row, quieter than the tiles: these describe how well the
+          pipeline is linked up, not what needs chasing. Each appears only once
+          it has something to say — a zero here means "not happening yet",
+          which is noise on a first run. */}
+      {(s.splitParcels || s.linkedToPacking || s.avgHoursWaiting) && (
+        <p className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-faint">
+          {typeof s.avgHoursWaiting === 'number' && (
+            <span className="tabular">
+              Average wait in the building:{' '}
+              <span className="text-muted">
+                {s.avgHoursWaiting < 1 ? 'under an hour' : `${Math.round(s.avgHoursWaiting)}h`}
+              </span>
+            </span>
+          )}
+          {Boolean(s.linkedToPacking) && (
+            <span className="tabular">
+              <span className="text-muted">{s.linkedToPacking}</span> linked to a packing record
+            </span>
+          )}
+          {Boolean(s.splitParcels) && (
+            <span className="tabular">
+              <span className="text-muted">{s.splitParcels}</span> split parcels
+            </span>
+          )}
+        </p>
+      )}
+
       <div className="mt-6">
         <DispatchTable initial={initial} />
       </div>

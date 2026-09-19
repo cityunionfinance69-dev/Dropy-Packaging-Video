@@ -498,6 +498,14 @@ export type DispatchRow = {
   items: string;
   /** How the order was matched: shopify-tracking | velocity | app | unresolved. */
   resolvedVia: string;
+  /** True when this parcel is one box of a multi-parcel order. */
+  split?: boolean;
+  /** How many parcels this order was split into. */
+  parcelsInOrder?: number;
+  /** When the parcel was packed — read back from the delivery log at scan time. */
+  packedAt?: string;
+  /** Hours between packing and dispatch: how long the parcel sat in the building. */
+  hoursWaiting?: number | string;
   updatedAt: string;
   /** Computed live against the delivery log, never stored. */
   delivered: boolean;
@@ -510,6 +518,12 @@ export type DispatchSummary = {
   delivered: number;
   outstanding: number;
   deliveredNotDispatched: number;
+  /** Mean hours between packing and dispatch. Blank until rows carry both stamps. */
+  avgHoursWaiting?: number | string;
+  /** Dispatch rows that resolved back to a packing record. */
+  linkedToPacking?: number;
+  /** Dispatch rows that are one box of a split order. */
+  splitParcels?: number;
 };
 
 export type DispatchListResponse = {
@@ -626,5 +640,96 @@ export async function fetchVelocityPing(): Promise<VelocityPingResponse> {
     return res;
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'unreachable' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Split orders — which products went into which box
+//
+// A multi-parcel order used to be unanswerable here: each parcel's dispatch row
+// listed the WHOLE order's contents, so a three-way split read as the order
+// shipping three times over, and the one record able to contradict a "my box
+// was missing an item" claim was wrong in the customer's favour.
+//
+// splitList groups by order rather than listing parcels flat, and joins each
+// parcel against both the delivery log and the dispatch log — so "has every
+// piece of this order actually gone out" becomes answerable, which needs all
+// three sheets at once.
+// ---------------------------------------------------------------------------
+
+export type SplitParcel = {
+  trackingId: string;
+  parcelNo?: number;
+  items?: string;
+  units?: number;
+  dispatched?: boolean;
+  delivered?: boolean;
+};
+
+export type SplitOrderRow = {
+  orderName: string;
+  baseOrder?: string;
+  customerName?: string;
+  parcels?: SplitParcel[];
+  parcelCount?: number;
+  units?: number;
+  /** True only when every parcel of the order has been scanned out. */
+  allDispatched?: boolean;
+  /** True only when every parcel of the order has been delivered. */
+  allDelivered?: boolean;
+};
+
+export type SplitListResponse = {
+  success: boolean;
+  summary: { splitOrders: number; parcels: number; units: number };
+  searched: boolean;
+  matchCount: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  rows: SplitOrderRow[];
+  error?: string;
+};
+
+/**
+ * Split orders, newest first.
+ *
+ * Never throws, for the same reason as fetchDispatchList: the Split Items sheet
+ * is written by the phone, so "no split orders yet" is a normal state rather
+ * than a failure.
+ */
+export async function fetchSplitList(opts: { offset?: number; limit?: number; q?: string } = {}): Promise<SplitListResponse> {
+  const { offset = 0, limit = 100, q = '' } = opts;
+
+  const empty: SplitListResponse = {
+    success: false,
+    summary: { splitOrders: 0, parcels: 0, units: 0 },
+    searched: Boolean(q),
+    matchCount: 0,
+    offset,
+    limit,
+    hasMore: false,
+    rows: []
+  };
+
+  try {
+    const base = requireEnv('DROPPY_MAIN_URL');
+    const key = requireEnv('DROPPY_ADMIN_KEY');
+    const url =
+      `${base}?action=splitList&key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}` +
+      (q ? `&q=${encodeURIComponent(q)}` : '');
+
+    const res = await fetchJson<SplitListResponse>(url, 55_000);
+
+    // Apps Script answers 200 for everything, and an undeployed action returns
+    // {status:'ok'} with no success field — which would read as an empty result.
+    if (typeof res.success !== 'boolean') {
+      return { ...empty, error: 'The splitList endpoint is not deployed yet.' };
+    }
+    if (!res.success) return { ...empty, error: res.error ?? 'splitList failed' };
+
+    return { ...res, summary: { ...empty.summary, ...(res.summary ?? {}) } };
+  } catch (err) {
+    return { ...empty, error: err instanceof Error ? err.message : 'Could not reach Apps Script' };
   }
 }

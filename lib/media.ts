@@ -215,7 +215,46 @@ export function orderMatches(orderName: string, query: string): boolean {
 
 export type LineItem = { qty: number; title: string; raw: string };
 
-/** "1x CeraVe … | 2x L'Oreal …" -> structured items. */
+/**
+ * Pull one item out of a Java map dump.
+ *
+ * Newer rows store items as the toString() of a map rather than a formatted
+ * string — three of the first fifty-three live rows look like:
+ *
+ *   {sku=Dropy-B0BZ2PFVSN, title=Ingenuity My Size Potty Pro…, quantity=1.0}
+ *
+ * The key order varies between rows, and the title itself contains commas, so
+ * splitting on "," loses half the product name. Matching `title=` up to the
+ * next `key=` (or the closing brace) is what survives that.
+ *
+ * Returns null when the chunk is not a map, so the caller can fall back.
+ */
+function parseMapItem(raw: string): LineItem | null {
+  if (!raw.includes('=')) return null;
+
+  // [\s\S] rather than the /s flag: dotAll needs an es2018 target, and a
+  // product title can legitimately contain a newline.
+  const title = raw.match(/title\s*=\s*([\s\S]*?)(?:,\s*\w+\s*=|\}|$)/);
+  if (!title) return null;
+
+  const qty = raw.match(/\bquantity\s*=\s*([\d.]+)/);
+  // "1.0" is the common form; round because a fractional parcel count is not a
+  // thing, and 0 or a missing value means one item, not none.
+  const n = qty ? Math.round(Number(qty[1])) : 1;
+
+  const cleaned = title[1].trim().replace(/[,\s]+$/, '');
+  if (!cleaned) return null;
+
+  return { qty: n > 0 ? n : 1, title: cleaned, raw };
+}
+
+/**
+ * "1x CeraVe … | 2x L'Oreal …" -> structured items.
+ *
+ * Handles both shapes the sheet actually contains: the formatted "Nx Title"
+ * string, and the raw map dump above. Splitting on "|" first is safe for both,
+ * since a map dump for one item contains no pipe.
+ */
 export function parseItems(items: string): LineItem[] {
   if (!items) return [];
   return items
@@ -223,6 +262,9 @@ export function parseItems(items: string): LineItem[] {
     .map((chunk) => chunk.trim())
     .filter(Boolean)
     .map((raw) => {
+      const mapped = parseMapItem(raw);
+      if (mapped) return mapped;
+
       const m = raw.match(/^(\d+)\s*x\s*(.*)$/i);
       return m ? { qty: Number(m[1]), title: m[2].trim(), raw } : { qty: 1, title: raw, raw };
     });
