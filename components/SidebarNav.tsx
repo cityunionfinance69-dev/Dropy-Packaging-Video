@@ -47,6 +47,17 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
     )
   },
   {
+    href: '/split',
+    label: 'Split orders',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
+        <path d="M4 4v4.5a2 2 0 0 0 2 2h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M11.5 8 14 10.5 11.5 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M4 16v-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  {
     href: '/health',
     label: 'Health',
     icon: (

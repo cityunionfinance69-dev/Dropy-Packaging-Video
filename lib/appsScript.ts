@@ -27,6 +27,13 @@ export type DeliveryRow = {
   // Drive subfolder.
   folderId: string;
   hasMedia: boolean;
+  /**
+   * When the parcel was scanned out of the building, written to the main log
+   * by logDispatch. Blank on rows that predate the column, which means
+   * "unknown" — NOT "never dispatched". Only dispatchList can assert an audit
+   * gap, so this renders as empty rather than as a warning.
+   */
+  dispatchedAt?: string;
 };
 
 export type DeliveriesResponse = {
@@ -498,7 +505,21 @@ export type DispatchRow = {
   items: string;
   /** How the order was matched: shopify-tracking | velocity | app | unresolved. */
   resolvedVia: string;
-  /** True when this parcel is one box of a multi-parcel order. */
+  /** Shopify's own status, verbatim. */
+  carrierStatus?: string;
+  /**
+   * Proof media exists — i.e. someone filmed it. Deliberately separate from
+   * `delivered`: a proof row is created when the parcel is RECORDED, long
+   * before it reaches anyone, so conflating the two would claim deliveries
+   * that have not happened.
+   */
+  hasRecord?: boolean;
+  /** Shipped per Shopify, not yet delivered. */
+  inTransit?: boolean;
+  /**
+   * True when this parcel is one box of a multi-parcel order — and then `items`
+   * describes only THAT box, never the whole order.
+   */
   split?: boolean;
   /** How many parcels this order was split into. */
   parcelsInOrder?: number;
@@ -515,14 +536,26 @@ export type DispatchRow = {
 
 export type DispatchSummary = {
   dispatched: number;
+  /** Shopify says Delivered — NOT "we hold proof media". */
   delivered: number;
+  /** Shipped per Shopify, not yet delivered. */
+  inTransit?: number;
   outstanding: number;
+  /**
+   * We scanned it out, Shopify still says it has not shipped. The one
+   * discrepancy our own scan can reveal that the carrier record cannot.
+   */
+  dispatchedNotShipped?: number;
+  /**
+   * Counted only from `auditSince`. A parcel delivered before anyone scanned
+   * parcels out did not skip a step — the step did not exist yet.
+   */
   deliveredNotDispatched: number;
-  /** Mean hours between packing and dispatch. Blank until rows carry both stamps. */
+  /** First day any parcel was scanned out; '' when nothing ever has been. */
+  auditSince?: string;
+  /** Mean hours packed -> dispatched. '' until something links. */
   avgHoursWaiting?: number | string;
-  /** Dispatch rows that resolved back to a packing record. */
   linkedToPacking?: number;
-  /** Dispatch rows that are one box of a split order. */
   splitParcels?: number;
 };
 
@@ -657,31 +690,61 @@ export async function fetchVelocityPing(): Promise<VelocityPingResponse> {
 // three sheets at once.
 // ---------------------------------------------------------------------------
 
+export type SplitParcelItem = { title: string; sku?: string; qty?: number };
+
 export type SplitParcel = {
   trackingId: string;
-  parcelNo?: number;
-  items?: string;
+  folder?: string;
+  recordedAt?: string;
   units?: number;
-  dispatched?: boolean;
+  /** Shopify says Delivered. */
   delivered?: boolean;
+  /** Proof media exists — not the same claim as delivered. */
+  hasRecord?: boolean;
+  carrierStatus?: string;
+  /** Our door scan, OR Shopify says it shipped. */
+  dispatched?: boolean;
+  items?: SplitParcelItem[];
 };
 
 export type SplitOrderRow = {
-  orderName: string;
-  baseOrder?: string;
-  customerName?: string;
-  parcels?: SplitParcel[];
-  parcelCount?: number;
-  units?: number;
-  /** True only when every parcel of the order has been scanned out. */
+  baseOrder: string;
+  parcelCount: number;
+  units: number;
+  lastRecordedAt?: string;
+  /** Every parcel left the building. */
   allDispatched?: boolean;
-  /** True only when every parcel of the order has been delivered. */
+  /** Every parcel Delivered per Shopify. */
   allDelivered?: boolean;
+
+  // Present only when called with verify=1:
+  verified?: boolean;
+  /** What Shopify says the order contains. */
+  unitsInOrder?: number;
+  /**
+   * Units no recorded box accounts for — either a parcel not yet shipped, or
+   * one that shipped without being recorded. The direct answer to "the
+   * customer says an item is missing". Negative is a data error, not a
+   * missing parcel.
+   */
+  unitsUnaccounted?: number;
+  shopifyStatus?: string;
+  parcels?: SplitParcel[];
+};
+
+export type SplitSummary = {
+  splitOrders: number;
+  parcels: number;
+  units: number;
+  /** Orders cross-checked against Shopify this call. */
+  verified?: number;
+  /** True = hit the deadline; call again for the rest. */
+  verifyStoppedEarly?: boolean;
 };
 
 export type SplitListResponse = {
   success: boolean;
-  summary: { splitOrders: number; parcels: number; units: number };
+  summary: SplitSummary;
   searched: boolean;
   matchCount: number;
   offset: number;
@@ -691,15 +754,10 @@ export type SplitListResponse = {
   error?: string;
 };
 
-/**
- * Split orders, newest first.
- *
- * Never throws, for the same reason as fetchDispatchList: the Split Items sheet
- * is written by the phone, so "no split orders yet" is a normal state rather
- * than a failure.
- */
-export async function fetchSplitList(opts: { offset?: number; limit?: number; q?: string } = {}): Promise<SplitListResponse> {
-  const { offset = 0, limit = 100, q = '' } = opts;
+export async function fetchSplitList(
+  opts: { offset?: number; limit?: number; q?: string; baseOrder?: string; verify?: boolean } = {}
+): Promise<SplitListResponse> {
+  const { offset = 0, limit = 100, q = '', baseOrder = '', verify = false } = opts;
 
   const empty: SplitListResponse = {
     success: false,
@@ -717,9 +775,13 @@ export async function fetchSplitList(opts: { offset?: number; limit?: number; q?
     const key = requireEnv('DROPPY_ADMIN_KEY');
     const url =
       `${base}?action=splitList&key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}` +
-      (q ? `&q=${encodeURIComponent(q)}` : '');
+      (q ? `&q=${encodeURIComponent(q)}` : '') +
+      (baseOrder ? `&baseOrder=${encodeURIComponent(baseOrder)}` : '') +
+      (verify ? '&verify=1' : '');
 
-    const res = await fetchJson<SplitListResponse>(url, 55_000);
+    // verify=1 costs one Shopify call per order on the page, so it gets the
+    // longest ceiling the platform allows rather than the default.
+    const res = await fetchJson<SplitListResponse>(url, verify ? 110_000 : 55_000);
 
     // Apps Script answers 200 for everything, and an undeployed action returns
     // {status:'ok'} with no success field — which would read as an empty result.
@@ -731,5 +793,52 @@ export async function fetchSplitList(opts: { offset?: number; limit?: number; q?
     return { ...res, summary: { ...empty.summary, ...(res.summary ?? {}) } };
   } catch (err) {
     return { ...empty, error: err instanceof Error ? err.message : 'Could not reach Apps Script' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// §7 — Backfilling unresolved dispatch rows
+//
+// When Shopify or Velocity is down, parcels still get scanned out and still get
+// a row; they just land with no order against them. Once the credential is
+// fixed, nothing would otherwise ever revisit those rows, so the unresolved
+// count would stay wrong forever.
+// ---------------------------------------------------------------------------
+
+export type DispatchBackfillResponse = {
+  success: boolean;
+  examined?: number;
+  filled?: number;
+  stillUnresolved?: number;
+  /** True = hit the deadline; run again for the rest. */
+  stoppedEarly?: boolean;
+  /** Set when nothing resolved — usually "the upstream credential is still down". */
+  hint?: string;
+  error?: string;
+};
+
+/**
+ * Re-resolve dispatch rows that have no order.
+ *
+ * Bounded by both a row limit and a four-minute deadline on the Apps Script
+ * side, so `stoppedEarly` is a normal outcome rather than a failure — the
+ * caller re-runs while it is true.
+ */
+export async function runDispatchBackfill(limit = 20): Promise<DispatchBackfillResponse> {
+  try {
+    const base = requireEnv('DROPPY_MAIN_URL');
+    const key = requireEnv('DROPPY_ADMIN_KEY');
+    // No retry: this WRITES to the sheet, and a silently re-sent write after an
+    // ambiguous failure could double-apply. The caller re-runs deliberately.
+    const res = await fetchJsonOnce<DispatchBackfillResponse>(
+      `${base}?action=dispatchBackfill&key=${encodeURIComponent(key)}&limit=${limit}`,
+      110_000
+    );
+    if (typeof res.success !== 'boolean') {
+      return { success: false, error: 'The dispatchBackfill endpoint is not deployed.' };
+    }
+    return res;
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Could not reach Apps Script' };
   }
 }

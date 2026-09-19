@@ -330,18 +330,36 @@ export function DispatchTable({ initial }: { initial: DispatchListResponse }) {
                   </td>
 
                   <td className="px-3 py-2.5">
-                    {r.delivered ? (
-                      <span className="inline-block whitespace-nowrap rounded-full border border-teal/30 bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">
-                        Delivered
-                      </span>
-                    ) : (
-                      <span
-                        className="inline-block whitespace-nowrap rounded-full border border-violet/30 bg-violet/10 px-2 py-0.5 text-[11px] font-medium text-violet"
-                        title="Scanned out of the warehouse, with no delivery recorded yet"
-                      >
-                        In flight
-                      </span>
-                    )}
+                    {/* `delivered` is Shopify's claim, `hasRecord` is ours —
+                        a proof row exists from the moment a parcel is filmed,
+                        long before it reaches anyone, so the two must never be
+                        collapsed into one badge. */}
+                    <span className="flex flex-col items-start gap-0.5">
+                      {r.delivered ? (
+                        <span className="inline-block whitespace-nowrap rounded-full border border-teal/30 bg-teal/10 px-2 py-0.5 text-[11px] font-medium text-teal">
+                          Delivered
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-block whitespace-nowrap rounded-full border border-violet/30 bg-violet/10 px-2 py-0.5 text-[11px] font-medium text-violet"
+                          title={
+                            r.carrierStatus
+                              ? `Carrier says: ${r.carrierStatus}`
+                              : 'Scanned out of the warehouse, with no delivery recorded yet'
+                          }
+                        >
+                          {r.inTransit ? 'In transit' : 'In flight'}
+                        </span>
+                      )}
+                      {r.carrierStatus && (
+                        <span className="text-[10px] text-faint">{r.carrierStatus}</span>
+                      )}
+                      {r.hasRecord === false && (
+                        <span className="text-[10px] text-amber" title="No proof media was recorded for this parcel">
+                          no record
+                        </span>
+                      )}
+                    </span>
                   </td>
 
                   <td className="px-3 py-2.5 align-top text-muted">

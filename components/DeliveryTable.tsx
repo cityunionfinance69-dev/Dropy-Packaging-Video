@@ -658,7 +658,19 @@ export function DeliveryTable() {
                     {/* Three states, and the third is not "no": until the id
                         set loads, nothing is known, and marking a row as an
                         audit gap on missing data would flag every row. */}
-                    {dispatchedIds === null ? (
+                    {/* The sheet's own Dispatched At wins when present: it is
+                        written at scan time and needs no join. Blank means
+                        "unknown" on a row predating the column, NOT "never
+                        dispatched" — so it falls through to the id set, which
+                        is the only thing that can assert an audit gap. */}
+                    {r.dispatchedAt ? (
+                      <span
+                        className="inline-block whitespace-nowrap rounded-full border border-teal/30 bg-teal/10 px-2 py-0.5 text-[11px] text-teal"
+                        title={`Scanned out ${r.dispatchedAt}`}
+                      >
+                        scanned
+                      </span>
+                    ) : dispatchedIds === null ? (
                       <span className="inline-block h-3 w-10 animate-pulse rounded bg-raised" aria-hidden />
                     ) : dispatchedIds.has(r.trackingId) ? (
                       <span

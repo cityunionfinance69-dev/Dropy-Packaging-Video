@@ -3,6 +3,7 @@ import { fetchDispatchList } from '@/lib/appsScript';
 import { StatBlock } from '@/components/StatBlock';
 import { DispatchTable } from '@/components/DispatchTable';
 import { UpstreamHealth } from '@/components/UpstreamHealth';
+import { BackfillButton } from '@/components/BackfillButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,9 +34,13 @@ async function DispatchView() {
         />
         <StatBlock
           value={s.deliveredNotDispatched.toLocaleString()}
-          label="Audit gap"
+          label={s.auditSince ? `Audit gap · since ${s.auditSince}` : 'Audit gap'}
           tone={s.deliveredNotDispatched > 0 ? 'warn' : 'neutral'}
-          hint="Delivered with no door scan"
+          hint={
+            s.auditSince
+              ? 'Shipped, but never scanned out'
+              : 'Nothing scanned out yet, so there is no gap to measure'
+          }
         />
       </div>
 
@@ -63,8 +68,39 @@ async function DispatchView() {
               <span className="text-muted">{s.splitParcels}</span> split parcels
             </span>
           )}
+          {Boolean(s.inTransit) && (
+            <span className="tabular">
+              <span className="text-muted">{s.inTransit}</span> in transit
+            </span>
+          )}
+          {Boolean(s.dispatchedNotShipped) && (
+            <span
+              className="tabular text-amber"
+              title="We scanned these out, but Shopify still shows them in the building — either the carrier never took them, or the status has not caught up."
+            >
+              <span className="font-medium">{s.dispatchedNotShipped}</span> scanned out but not shipped
+            </span>
+          )}
         </p>
       )}
+
+      {(() => {
+        const unresolved = initial.rows.filter((r) => r.unresolved).length;
+        if (!unresolved) return null;
+        return (
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-amber/30 bg-amber/[0.04] px-3 py-2.5">
+            <span className="text-xs text-amber">
+              <span className="font-semibold">{unresolved}</span> parcel{unresolved === 1 ? '' : 's'} on this page
+              left the building with no order matched.
+            </span>
+            <BackfillButton unresolvedCount={unresolved} />
+            <span className="text-[11px] text-faint">
+              Older unresolved rows are usually a product barcode scanned instead of the courier label; the app now
+              refuses those, so they will not keep appearing.
+            </span>
+          </div>
+        );
+      })()}
 
       <div className="mt-6">
         <DispatchTable initial={initial} />
