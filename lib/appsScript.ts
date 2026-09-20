@@ -5,6 +5,8 @@
 // That boundary matters: if you later swap the sheet for a real database, or
 // add a caching layer, this is the only file that changes.
 
+import { cache } from 'react';
+
 export type DeliveryRow = {
   trackingId: string;
   orderName: string;
@@ -248,7 +250,10 @@ async function fetchStatsFrom(url: string): Promise<StatsResponse> {
   return fetchJson<StatsResponse>(url, 55_000);
 }
 
-export async function fetchStats(): Promise<StatsResponse> {
+export const fetchStats = cache(_fetchStats);
+
+/** Memoised per request — Overview and the Deliveries strip both ask for it. */
+async function _fetchStats(): Promise<StatsResponse> {
   const base = requireEnv('DROPPY_MAIN_URL');
   const key = requireEnv('DROPPY_ADMIN_KEY');
   const k = encodeURIComponent(key);
@@ -314,7 +319,23 @@ function emptyStats(): StatsResponse {
  *  20s isn't going to, and retrying it only doubles the wait for a card whose
  *  neighbours have long since rendered.
  */
-export async function fetchQuota(acct: StorageAccountConfig): Promise<QuotaResponse & { label: string }> {
+export const fetchQuota = cache(_fetchQuota);
+
+/**
+ * Deduplicated per request by the `cache` wrapper above.
+ *
+ * Overview was making TWENTY Apps Script calls for ten accounts: the fleet
+ * summary asks for all ten, and each of the ten cards then asks again for its
+ * own. Measured against the live endpoint, a call costs the same whether it
+ * returns 1 row or 200 — the sheet read dominates — so the only lever that
+ * moves the number is the call COUNT, and this halves it.
+ *
+ * `cache` is scoped to a single request, so two components in one render share
+ * an answer while the next page load still gets fresh data. That is memoisation,
+ * not a cache layer: nothing outlives the request, and the sheet stays the
+ * single source of truth.
+ */
+async function _fetchQuota(acct: StorageAccountConfig): Promise<QuotaResponse & { label: string }> {
   try {
     // 12s, down from 45s.
     //
@@ -366,28 +387,20 @@ export async function fetchQuota(acct: StorageAccountConfig): Promise<QuotaRespo
  *  key needed (capacity_() isn't gated by requireKey_, unlike meta/purge). */
 export async function fetchAllQuotas(): Promise<Array<QuotaResponse & { label: string }>> {
   const accounts = getStorageAccounts();
-  const results = await Promise.allSettled(
-    accounts.map(async (acct) => {
-      const url = `${acct.url}?action=capacity`;
-      const data = await fetchJson<QuotaResponse>(url);
-      return { ...data, label: acct.label };
-    })
-  );
 
-  return results.map((r, i) =>
-    r.status === 'fulfilled'
-      ? r.value
-      : {
-          success: false,
-          account: accounts[i].label,
-          label: accounts[i].label,
-          limitBytes: 0,
-          usedBytes: 0,
-          freeBytes: 0,
-          hasRoom: false,
-          error: r.reason instanceof Error ? r.reason.message : 'unreachable'
-        }
-  );
+  // Routed through the memoised fetchQuota rather than calling Apps Script
+  // directly. Two things were wrong with doing its own fetch:
+  //
+  //   1. It bypassed the memoisation, so the fleet summary and the ten cards
+  //      queried every account twice — twenty calls for ten accounts.
+  //   2. It used fetchJson's 30s default plus a retry, so one unresponsive
+  //      account could hold this for a minute, while the cards had already
+  //      moved to a 12s ceiling. The live error text ("timed out after 30s")
+  //      came from here, not from the card path.
+  //
+  // fetchQuota never throws, so allSettled is no longer needed to keep one bad
+  // account from taking the rest with it.
+  return Promise.all(accounts.map((acct) => fetchQuota(acct)));
 }
 
 export type AssignOrderResponse = {
@@ -471,7 +484,10 @@ export type ShopifyPingResponse = { success: boolean; shopifyOk?: boolean; shop?
  * Never throws: a failure to even ask is reported as "not ok" with the reason,
  * since the banner is advisory and must never break a page render.
  */
-export async function fetchShopifyPing(): Promise<ShopifyPingResponse> {
+export const fetchShopifyPing = cache(_fetchShopifyPing);
+
+/** Memoised per request: the health banner and dispatch view both probe it. */
+async function _fetchShopifyPing(): Promise<ShopifyPingResponse> {
   try {
     const base = requireEnv('DROPPY_MAIN_URL');
     const key = requireEnv('DROPPY_ADMIN_KEY');
@@ -674,7 +690,10 @@ export type VelocityPingResponse = {
  * `warning` is the valuable field: an expiring token is a SCHEDULED outage,
  * and the only upstream failure here that can be fixed before it happens.
  */
-export async function fetchVelocityPing(): Promise<VelocityPingResponse> {
+export const fetchVelocityPing = cache(_fetchVelocityPing);
+
+/** Memoised per request, for the same reason as the Shopify probe. */
+async function _fetchVelocityPing(): Promise<VelocityPingResponse> {
   try {
     const base = requireEnv('DROPPY_MAIN_URL');
     const res = await fetchJsonOnce<VelocityPingResponse>(`${base}?action=velocityPing`, 20_000);
