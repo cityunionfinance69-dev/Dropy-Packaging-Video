@@ -2,7 +2,21 @@ import { Suspense } from 'react';
 import { StorageSection, StorageSkeleton } from './StorageSection';
 import { StatsSection, StatsSkeleton } from './StatsSection';
 
-export const dynamic = 'force-dynamic'; // always fresh — this is an ops tool, not a marketing page we want cached
+// Revalidated rather than force-dynamic.
+//
+// This page makes eleven Apps Script calls — ten storage quotas plus the sheet
+// stats — and finishes when the slowest answers, which measured 12-21s live.
+// Every call is 2-3s of script startup before it reads anything, so the only
+// way below that is to not make them on every view.
+//
+// 60s is chosen against what the numbers actually are: Drive quotas move as
+// parcels are filmed through the day, and sheet totals by the minute. Nobody
+// acts differently on a storage bar that is one minute old, and the page now
+// costs one round trip a minute instead of one per visitor.
+//
+// The delivery table is deliberately NOT cached — see DeliveryTable, which
+// fetches its own rows client-side and stays live.
+export const revalidate = 60;
 
 // The page shell itself awaits NOTHING. Each data-backed section is its own
 // async component behind its own <Suspense>, so the header and layout paint

@@ -2,7 +2,8 @@ import { Suspense } from 'react';
 import { fetchStats } from '@/lib/appsScript';
 import { RetryButton } from '@/components/RetryButton';
 
-export const dynamic = 'force-dynamic';
+// The unmatched list is a work queue reviewed in sittings, not a live feed.
+export const revalidate = 60;
 
 const Code = ({ children }: { children: React.ReactNode }) => (
   <code className="rounded bg-raised px-1 py-0.5 font-mono text-[11px] text-accent">{children}</code>

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchDeliveries } from '@/lib/appsScript';
 
+// Always live. The page shells are revalidated every 60s, but anything the
+// operator actively asks for — a filter, a sort, a page, a search — must be
+// the current sheet. A cached answer to "show me Delivered" is the one kind of
+// staleness that actually misleads.
+export const dynamic = 'force-dynamic';
+
 // Notice how little logic lives here — that's the point of lib/appsScript.ts.
 // This route's only job is: read query params, call the client, return JSON.
 export async function GET(req: NextRequest) {

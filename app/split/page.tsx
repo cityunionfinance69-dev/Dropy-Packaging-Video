@@ -3,7 +3,10 @@ import { fetchSplitList } from '@/lib/appsScript';
 import { StatBlock } from '@/components/StatBlock';
 import { SplitOrders } from '@/components/SplitOrders';
 
-export const dynamic = 'force-dynamic';
+// Split orders change only when a multi-parcel order is packed, so a minute of
+// staleness is invisible here. The Shopify cross-check is a button and is never
+// cached: it exists to give a definitive answer on demand.
+export const revalidate = 60;
 export const metadata = { title: 'Split orders — Droppy' };
 
 async function SplitView() {

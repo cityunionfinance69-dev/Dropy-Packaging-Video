@@ -175,11 +175,26 @@ export function getStorageAccounts(): StorageAccountConfig[] {
  *  a few seconds on a genuinely dead endpoint but rescues the common transient
  *  case, which is the right trade for a dashboard that's useless when blank.
  */
-async function fetchJsonOnce<T>(url: string, timeoutMs: number): Promise<T> {
+async function fetchJsonOnce<T>(url: string, timeoutMs: number, live = false): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+    // `next.revalidate` rather than `cache: 'no-store'`.
+    //
+    // no-store opts every request out of Next's data cache, which would make
+    // the pages' `export const revalidate = 60` a no-op: the page shell would
+    // be reused while every fetch underneath it still hit Apps Script. Handing
+    // the window to the fetch itself is what actually collapses eleven calls
+    // per visitor into eleven per minute.
+    //
+    // Writes do not come through here — assignOrder and dispatchBackfill use
+    // their own POST routes — so nothing mutating can be served from cache.
+    const res = await fetch(url, {
+      signal: controller.signal,
+      // `live` is for anything the operator just asked for by hand; everything
+      // else shares the 60s window.
+      ...(live ? { cache: 'no-store' as const } : { next: { revalidate: 60 } })
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     // Read as text first, then parse.
@@ -213,13 +228,13 @@ async function fetchJsonOnce<T>(url: string, timeoutMs: number): Promise<T> {
   }
 }
 
-async function fetchJson<T>(url: string, timeoutMs = 30_000): Promise<T> {
+async function fetchJson<T>(url: string, timeoutMs = 30_000, live = false): Promise<T> {
   try {
-    return await fetchJsonOnce<T>(url, timeoutMs);
+    return await fetchJsonOnce<T>(url, timeoutMs, live);
   } catch (err) {
     await new Promise((r) => setTimeout(r, 600));
     try {
-      return await fetchJsonOnce<T>(url, timeoutMs);
+      return await fetchJsonOnce<T>(url, timeoutMs, live);
     } catch {
       // Report the FIRST failure: it's the one that describes the normal
       // condition, while the retry's error can be noise from the backoff race.
@@ -255,7 +270,11 @@ export async function fetchDeliveries(
     (o.days ? `&days=${o.days}` : '') +
     (o.sort ? `&sort=${encodeURIComponent(o.sort)}&dir=${o.dir === 'asc' ? 'asc' : 'desc'}` : '');
 
-  return fetchJson<DeliveriesResponse>(url);
+  // Any query with a filter, sort or search is something the operator just
+  // asked for, so it bypasses the cache. A plain unfiltered page 1 is the
+  // common shared view and may come from the 60s window.
+  const live = Boolean(o.q || o.status || o.account || o.days || o.sort);
+  return fetchJson<DeliveriesResponse>(url, 30_000, live);
 }
 
 /** Whole-sheet summary.
@@ -375,7 +394,15 @@ async function _fetchQuota(acct: StorageAccountConfig): Promise<QuotaResponse & 
     // the page.
     let data: QuotaResponse;
     try {
-      data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 12_000);
+      // 25s under caching, not 12s.
+      //
+      // The 12s ceiling was right when every visitor paid the wait: cutting a
+      // slow account loose kept the page usable. With a 60s cache that trade
+      // inverts — a card that times out is now FROZEN as "unreachable" for the
+      // whole window, so three slow accounts vanished from a cached page while
+      // seven were fine. One visitor waiting longer once a minute is much
+      // cheaper than a minute of wrong information.
+      data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 25_000);
     } catch (first) {
       // Google intermittently answers with an HTML error page; the same request
       // usually succeeds moments later. Reads are safe to retry — but a TIMEOUT
@@ -383,7 +410,7 @@ async function _fetchQuota(acct: StorageAccountConfig): Promise<QuotaResponse & 
       // account already known to be slow.
       if (first instanceof Error && /HTML error page|non-JSON/.test(first.message)) {
         await new Promise((r) => setTimeout(r, 800));
-        data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 12_000);
+        data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 25_000);
       } else {
         throw first;
       }

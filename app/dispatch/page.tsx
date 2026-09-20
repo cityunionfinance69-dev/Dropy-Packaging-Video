@@ -5,7 +5,12 @@ import { DispatchTable } from '@/components/DispatchTable';
 import { UpstreamHealth } from '@/components/UpstreamHealth';
 import { BackfillButton } from '@/components/BackfillButton';
 
-export const dynamic = 'force-dynamic';
+// 60s, same reasoning as Overview: dispatchList joins two sheets and measured
+// 9-21s live. A parcel scanned out seconds ago appearing a minute later is not
+// a problem for a chase list — the queue is reviewed, not watched. Every filter
+// and page change still goes straight to the server, so anything the operator
+// actively asks for is live.
+export const revalidate = 60;
 
 export const metadata = { title: 'Dispatch — Droppy' };
 

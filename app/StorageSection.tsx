@@ -21,6 +21,24 @@ async function OneCard({ acct }: { acct: StorageAccountConfig }) {
   return <StorageCard data={quota} />;
 }
 
+// How many accounts answered, so the page can admit when it is showing a
+// partial fleet. Under a 60s cache a failed account is frozen for the whole
+// window, and ten cards where two say nothing is indistinguishable from eight
+// accounts existing — which would quietly understate how full storage is.
+async function FleetNote() {
+  const accounts = getStorageAccounts();
+  const quotas = await Promise.all(accounts.map((a) => fetchQuota(a)));
+  const missing = quotas.filter((q) => !q.success);
+  if (missing.length === 0) return null;
+
+  return (
+    <p className="mt-2 text-[11px] text-amber">
+      {missing.length} of {accounts.length} accounts did not answer this minute (
+      {missing.map((m) => m.label).join(', ')}). Their usage is not counted in the totals above.
+    </p>
+  );
+}
+
 function CardSkeleton({ label }: { label: string }) {
   return (
     <div data-storage-card="pending" className="rounded-xl border border-dashed border-border bg-panel p-4">
@@ -68,6 +86,10 @@ export function StorageSection() {
           from config, so this can say "6 of 10" without waiting for any of
           them — which is the whole point. */}
       <StorageProgress total={accounts.length} />
+
+      <Suspense fallback={null}>
+        <FleetNote />
+      </Suspense>
 
       {/* Config order, not fullest-first: sorting would require awaiting every
           account, which is exactly the blocking this structure removes. The
