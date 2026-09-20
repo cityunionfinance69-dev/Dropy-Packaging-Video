@@ -138,6 +138,10 @@ export default function DispatchPage() {
         </Suspense>
       </div>
 
+      {/* One boundary for tiles+table together, because dispatchList answers
+          both in a single call — splitting them would double a 7s request, not
+          halve the wait. The credential probe above has its own boundary so it
+          can never delay this. */}
       <Suspense fallback={<TilesSkeleton />}>
         <DispatchView />
       </Suspense>

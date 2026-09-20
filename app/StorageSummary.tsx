@@ -11,6 +11,11 @@ import { fetchAllQuotas } from '@/lib/appsScript';
 // out. Leading with how many accounts are nearly full, and reporting headroom
 // only for those, is the number that reflects the real constraint.
 export async function StorageSummary() {
+  // fetchAllQuotas resolves only when every account has answered or timed out,
+  // so this line inherits the slowest account in the fleet — two of which
+  // currently never answer. The individual cards each stream on their own
+  // boundary and are unaffected; it is only this one summary line that waits,
+  // and it is the last thing on the page anyone needs.
   const quotas = await fetchAllQuotas();
 
   const reachable = quotas.filter((q) => q.success);

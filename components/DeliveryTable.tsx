@@ -229,17 +229,30 @@ export function DeliveryTable() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/dispatch-ids')
-      .then((r) => r.json())
-      .then((d) => {
+
+    // Deferred, not fired on mount.
+    //
+    // This walks the whole Dispatch sheet and measures ~7.7s. Competing with
+    // the row fetch for the browser's connection made the table itself slower,
+    // to fill a column that most rows no longer need: dashboardData now returns
+    // `Dispatched At` directly, and this is only the fallback for rows written
+    // before that column existed. Letting the rows land first costs those older
+    // rows a second of "unknown" and makes the page usable immediately.
+    const started = setTimeout(() => {
+      fetch('/api/dispatch-ids')
+        .then((r) => r.json())
+        .then((d) => {
         // An empty or absent Dispatch sheet is a normal first-run state, so a
         // failure here leaves the column silent rather than showing an error
         // on a page that is otherwise fine.
-        if (!cancelled && d.success) setDispatchedIds(new Set<string>(d.ids ?? []));
-      })
-      .catch(() => {});
+          if (!cancelled && d.success) setDispatchedIds(new Set<string>(d.ids ?? []));
+        })
+        .catch(() => {});
+    }, 1200);
+
     return () => {
       cancelled = true;
+      clearTimeout(started);
     };
   }, []);
 

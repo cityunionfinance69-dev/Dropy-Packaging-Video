@@ -316,19 +316,28 @@ function emptyStats(): StatsResponse {
  */
 export async function fetchQuota(acct: StorageAccountConfig): Promise<QuotaResponse & { label: string }> {
   try {
-    // 45s, not 20s: one account measures 11-38s while the other nine answer in
-    // about two. Each card has its own Suspense boundary, so the slow one
-    // delays only itself — cutting it off at 20s turned a slow-but-working
-    // account into an "unreachable" card, which is worse information.
+    // 12s, down from 45s.
+    //
+    // Measured across the fleet: eight accounts answer in under 3.1s, one takes
+    // ~10s, and two do not answer inside a minute at all. A 45s ceiling meant
+    // those two held a spinner for 45 seconds before admitting defeat, and the
+    // page was not usable until they did. Cutting at 12s costs nothing for the
+    // eight that are fast, and turns a 45-second wait into a card that says
+    // plainly that the account is not responding.
+    //
+    // Each card has its own Suspense boundary, so this bounds one card, never
+    // the page.
     let data: QuotaResponse;
     try {
-      data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 45_000);
+      data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 12_000);
     } catch (first) {
       // Google intermittently answers with an HTML error page; the same request
-      // usually succeeds moments later. Reads are safe to retry.
+      // usually succeeds moments later. Reads are safe to retry — but a TIMEOUT
+      // is not retried, because the second attempt would double the wait for an
+      // account already known to be slow.
       if (first instanceof Error && /HTML error page|non-JSON/.test(first.message)) {
         await new Promise((r) => setTimeout(r, 800));
-        data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 45_000);
+        data = await fetchJsonOnce<QuotaResponse>(`${acct.url}?action=capacity`, 12_000);
       } else {
         throw first;
       }
