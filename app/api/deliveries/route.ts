@@ -8,7 +8,15 @@ export async function GET(req: NextRequest) {
   const limit = Number(req.nextUrl.searchParams.get('limit') ?? 200);
 
   try {
-    const data = await fetchDeliveries(offset, limit, req.nextUrl.searchParams.get('q') ?? '');
+    const p = req.nextUrl.searchParams;
+    const data = await fetchDeliveries(offset, limit, {
+      q: p.get('q') ?? '',
+      status: p.get('status') ?? '',
+      account: p.get('account') ?? '',
+      days: Number(p.get('days') ?? 0) || 0,
+      sort: p.get('sort') ?? '',
+      dir: p.get('dir') === 'asc' ? 'asc' : 'desc'
+    });
     return NextResponse.json(data);
   } catch (err) {
     // Never let the raw error (which could contain env var contents) leak to the client.

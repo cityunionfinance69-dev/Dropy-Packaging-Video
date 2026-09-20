@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { fetchQuota, getStorageAccounts, type StorageAccountConfig } from '@/lib/appsScript';
 import { StorageCard } from '@/components/StorageCard';
 import { StorageSummary } from './StorageSummary';
+import { StorageProgress } from '@/components/StorageProgress';
 
 // Each storage card is its own async component behind its own <Suspense>, so a
 // single slow account can't hold up the other nine.
@@ -22,15 +23,19 @@ async function OneCard({ acct }: { acct: StorageAccountConfig }) {
 
 function CardSkeleton({ label }: { label: string }) {
   return (
-    <div className="rounded-xl border border-border bg-panel p-4 shadow-card">
+    <div data-storage-card="pending" className="rounded-xl border border-dashed border-border bg-panel p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          {/* The label is known before the data is, so show it — a skeleton
-              that already names the account tells you what's still loading. */}
+          {/* The label is known before the data is, so name the account: a
+              skeleton that says WHICH account is still coming is the
+              difference between "working" and "stuck". */}
           <div className="truncate text-sm font-medium text-muted">{label}</div>
           <div className="mt-1.5 h-2 w-32 animate-pulse rounded bg-raised" />
         </div>
-        <div className="h-4 w-10 animate-pulse rounded bg-raised" />
+        {/* Says it in words, not only as a shape. Some of these accounts take
+            the better part of a minute, and a bare grey rectangle for that long
+            reads as a failure. */}
+        <span className="shrink-0 whitespace-nowrap text-[10px] text-faint">checking…</span>
       </div>
       <div className="mt-3 h-2 w-full animate-pulse rounded-full bg-raised" />
       <div className="mt-3 h-2.5 w-36 animate-pulse rounded bg-raised" />
@@ -58,6 +63,11 @@ export function StorageSection() {
       <Suspense fallback={<div className="mt-3 h-[52px] animate-pulse rounded-xl border border-border bg-panel shadow-card" />}>
         <StorageSummary />
       </Suspense>
+
+      {/* Counts cards as they stream in. The account total is known up front
+          from config, so this can say "6 of 10" without waiting for any of
+          them — which is the whole point. */}
+      <StorageProgress total={accounts.length} />
 
       {/* Config order, not fullest-first: sorting would require awaiting every
           account, which is exactly the blocking this structure removes. The

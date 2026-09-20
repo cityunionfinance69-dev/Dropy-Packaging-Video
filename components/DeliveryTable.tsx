@@ -134,10 +134,19 @@ const DATE_RANGE_OPTIONS = [
   { value: '30', label: 'Last 30 days' }
 ] as const;
 
+type TableQuery = {
+  q?: string;
+  status?: string;
+  account?: string;
+  days?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+};
+
 async function fetchDeliveries(
   offset: number,
   limit: number,
-  q = ''
+  query: TableQuery = {}
 ): Promise<{
   rows: DeliveryRow[];
   hasMore: boolean;
@@ -147,9 +156,17 @@ async function fetchDeliveries(
   /** True when the server filtered rather than returning a plain page. */
   searched?: boolean;
 }> {
-  const res = await fetch(
-    `/api/deliveries?offset=${offset}&limit=${limit}` + (q ? `&q=${encodeURIComponent(q)}` : '')
-  );
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (query.q) params.set('q', query.q);
+  if (query.status) params.set('status', query.status);
+  if (query.account) params.set('account', query.account);
+  if (query.days) params.set('days', String(query.days));
+  if (query.sort) {
+    params.set('sort', query.sort);
+    params.set('dir', query.dir ?? 'desc');
+  }
+
+  const res = await fetch(`/api/deliveries?${params}`);
   const data = await res.json();
   if (!data.success) throw new Error(data.error ?? 'Failed to load');
   return {
@@ -191,6 +208,55 @@ async function runWithConcurrency<T>(tasks: Array<() => Promise<T>>, concurrency
   await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
 }
 
+/**
+ * A clickable column header.
+ *
+ * Sorting runs on the server across every matching row, so this is a real sort
+ * of 2,535 deliveries rather than a reshuffle of the twenty on screen. The
+ * caret shows direction; a third click clears it and returns to sheet order.
+ */
+function SortHeader({
+  label,
+  by,
+  sort,
+  onSort,
+  align = 'left'
+}: {
+  label: string;
+  by: string;
+  sort: { by: string; dir: 'asc' | 'desc' } | null;
+  onSort: (by: string) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sort?.by === by;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(by)}
+      title={
+        active
+          ? sort?.dir === 'desc'
+            ? `Sorted high to low — click for low to high`
+            : `Sorted low to high — click to clear`
+          : `Sort by ${label.toLowerCase()}`
+      }
+      className={`group/sort flex w-full items-center gap-1 ${align === 'right' ? 'justify-end' : ''} ${
+        active ? 'text-accent' : 'hover:text-ink'
+      }`}
+    >
+      <span>{label}</span>
+      <span
+        aria-hidden
+        className={`text-[9px] leading-none transition-opacity ${
+          active ? 'opacity-100' : 'opacity-0 group-hover/sort:opacity-50'
+        }`}
+      >
+        {active && sort?.dir === 'asc' ? '▲' : '▼'}
+      </span>
+    </button>
+  );
+}
+
 export function DeliveryTable() {
   // BROWSE mode state — one page of BROWSE_PAGE_SIZE rows at a time.
   const [browseRows, setBrowseRows] = useState<DeliveryRow[]>([]);
@@ -201,10 +267,8 @@ export function DeliveryTable() {
 
   // SEARCH mode state — the full dataset, fetched once in chunks, kept until
   // every filter is cleared.
-  const [allRows, setAllRows] = useState<DeliveryRow[]>([]);
-  const [searchTotal, setSearchTotal] = useState<number | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchPage, setSearchPage] = useState(0); // 0-based, resets whenever a filter changes
+  // The separate "search mode" state is gone with the whole-sheet download:
+  // there is one path now, and the server answers it.
 
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -217,6 +281,23 @@ export function DeliveryTable() {
   // selects it — with ~20 wide rows on screen, losing your place while reading
   // across to the Items column is the easiest mistake to make here.
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Sorting is done by the server across ALL matching rows, not by the browser
+  // across the twenty on screen. Sorting a single page would silently answer
+  // "the largest order on page 1", which on a 127-page table is not the
+  // question anyone is asking.
+  const [sort, setSort] = useState<{ by: string; dir: 'asc' | 'desc' } | null>(null);
+
+  function toggleSort(by: string) {
+    setSort((cur) => {
+      if (cur?.by !== by) return { by, dir: 'desc' };
+      // Third click clears it, back to sheet order (newest first) — otherwise
+      // there is no way back without reloading.
+      if (cur.dir === 'desc') return { by, dir: 'asc' };
+      return null;
+    });
+    setBrowsePage(0);
+  }
 
   // Tracking IDs that have a dispatch scan.
   //
@@ -277,15 +358,26 @@ export function DeliveryTable() {
   const hasDropdownFilters = statusFilter !== 'all' || accountFilter !== 'all' || dateRange !== 'all';
   const hasActiveFilters = Boolean(trimmedQuery || hasDropdownFilters);
 
+  // The whole query, in one object, so the fetch effect has a single dependency
+  // and cannot fall out of step with what the toolbar shows.
+  const serverQuery: TableQuery = {
+    q: activeQuery || undefined,
+    status: statusFilter !== 'all' ? statusFilter : undefined,
+    account: accountFilter !== 'all' ? accountFilter : undefined,
+    days: dateRange !== 'all' ? Number(dateRange) : undefined,
+    sort: sort?.by,
+    dir: sort?.dir
+  };
+  const queryKey = JSON.stringify(serverQuery);
+
   // Paged fetch. Serves plain browsing AND a typed search — the only difference
   // is whether `q` goes along, and the server pages the matches the same way it
   // pages the sheet. The whole-sheet download only survives for the dropdown
   // filters below.
   useEffect(() => {
-    if (hasDropdownFilters) return;
     let cancelled = false;
     setBrowseLoading(true);
-    fetchDeliveries(browsePage * BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE, activeQuery)
+    fetchDeliveries(browsePage * BROWSE_PAGE_SIZE, BROWSE_PAGE_SIZE, serverQuery)
       .then((data) => {
         if (cancelled) return;
         setBrowseRows(data.rows);
@@ -300,7 +392,9 @@ export function DeliveryTable() {
     return () => {
       cancelled = true;
     };
-  }, [browsePage, hasDropdownFilters, activeQuery]);
+    // queryKey, not the object: a fresh object each render would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browsePage, queryKey]);
 
   // SEARCH fetch — kicks in the moment a filter becomes active, and pulls
   // everything in SEARCH_FETCH_CHUNK-row calls until the whole sheet is in
@@ -320,132 +414,44 @@ export function DeliveryTable() {
   // page the new result set may not have.
   useEffect(() => {
     setBrowsePage(0);
-  }, [activeQuery]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryKey]);
 
-  const searchSessionStarted = useRef(false);
-  useEffect(() => {
-    // Only the dropdowns need every row. A typed query is answered by the
-    // server, so it no longer triggers this download.
-    if (!hasDropdownFilters) {
-      searchSessionStarted.current = false;
-      return;
-    }
-    if (searchSessionStarted.current) return;
-    searchSessionStarted.current = true;
-    let cancelled = false;
-
-    async function loadAll() {
-      setSearchLoading(true);
-      try {
-        // Chunk 0 first and alone — it's the only one that tells us
-        // totalRows (how many more chunks even exist), and getting SOME
-        // results on screen fast matters more than having all of them.
-        const first = await fetchDeliveriesWithRetry(0, SEARCH_FETCH_CHUNK);
-        if (cancelled) return;
-        setAllRows(first.rows);
-        setSearchTotal(first.totalRows);
-
-        const remainingOffsets: number[] = [];
-        for (let o = SEARCH_FETCH_CHUNK; o < first.totalRows; o += SEARCH_FETCH_CHUNK) remainingOffsets.push(o);
-        if (remainingOffsets.length === 0) return;
-
-        // Indexed by chunk position (not append-on-arrival): concurrency
-        // means chunks can land out of order, and slicing by page below
-        // depends on row order matching sheet order.
-        const byChunk: DeliveryRow[][] = remainingOffsets.map(() => []);
-        await runWithConcurrency(
-          remainingOffsets.map((offset, i) => async () => {
-            const data = await fetchDeliveriesWithRetry(offset, SEARCH_FETCH_CHUNK);
-            return { i, rows: data.rows };
-          }),
-          3, // measured against the live endpoint: 3-way parallel is reliable (all 200s, ~5.7s total); 4-way produced a 502 from Apps Script-side contention
-          ({ i, rows }) => {
-            if (cancelled) return;
-            byChunk[i] = rows;
-            setAllRows([first.rows, ...byChunk].flat());
-          }
-        );
-        if (!cancelled) setError(null);
-      } catch (err) {
-        if (!cancelled) setError(String(err));
-      } finally {
-        if (!cancelled) setSearchLoading(false);
-      }
-    }
-    loadAll();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasDropdownFilters]);
-
-  // Once every filter clears, drop the full copy so idle browsing goes back
-  // to cheap paged fetches instead of holding the whole sheet in memory.
-  useEffect(() => {
-    if (!hasDropdownFilters && allRows.length > 0) {
-      setAllRows([]);
-      setSearchTotal(null);
-      setSearchPage(0);
-    }
-  }, [hasDropdownFilters, allRows.length]);
+  // The whole-sheet download is gone.
+  //
+  // Selecting a dropdown used to pull every row into the browser — 2,535 rows
+  // in 500-row chunks at ~3.6s each, so picking "Delivered" cost 15-20 seconds
+  // and showed "no match yet" for most of it. dashboardData now filters and
+  // sorts server-side, which measures ~3s, because it already holds the sheet
+  // in memory when the request arrives.
 
   // Distinct statuses/accounts for the filter dropdowns — sourced from
   // whichever rows are currently in memory (browse page or full search set).
-  const optionSource = hasDropdownFilters ? allRows : browseRows;
-  const statusOptions = useMemo(
-    () => Array.from(new Set(optionSource.map((r) => r.deliveryStatus).filter(Boolean))).sort(),
-    [optionSource]
-  );
-  const accountOptions = useMemo(
-    () => Array.from(new Set(optionSource.map((r) => r.driveAccount).filter(Boolean))).sort(),
-    [optionSource]
-  );
+  // Options are drawn from the rows on screen. The selected value is added
+  // back in explicitly, because once a filter is applied the server returns
+  // only matching rows — without this the active choice would vanish from its
+  // own dropdown.
+  const optionSource = browseRows;
+  const statusOptions = useMemo(() => {
+    const set = new Set(optionSource.map((r) => r.deliveryStatus).filter(Boolean));
+    if (statusFilter !== 'all') set.add(statusFilter);
+    return Array.from(set).sort();
+  }, [optionSource, statusFilter]);
+  const accountOptions = useMemo(() => {
+    const set = new Set(optionSource.map((r) => r.driveAccount).filter(Boolean));
+    if (accountFilter !== 'all') set.add(accountFilter);
+    return Array.from(set).sort();
+  }, [optionSource, accountFilter]);
 
-  const filtered = useMemo(() => {
-    // No dropdowns: the server already returned exactly the rows to show,
-    // searched or not.
-    if (!hasDropdownFilters) return browseRows;
-    const q = query.trim().toLowerCase();
-    const rangeDays = dateRange === 'all' ? null : Number(dateRange);
-    const cutoff = rangeDays ? Date.now() - rangeDays * 24 * 60 * 60 * 1000 : null;
-
-    return allRows.filter((r) => {
-      if (statusFilter !== 'all' && r.deliveryStatus !== statusFilter) return false;
-      if (accountFilter !== 'all' && r.driveAccount !== accountFilter) return false;
-      if (cutoff !== null) {
-        const d = addedAt(r);
-        if (!d || d.getTime() < cutoff) return false;
-      }
-      if (q) {
-        // Order IDs get segment-aware matching so a parent order finds its
-        // sub-orders and "16420" is never confused with "1642" — see
-        // orderMatches in lib/media.ts. Everything else stays plain substring.
-        if (r.orderName && orderMatches(r.orderName, q)) return true;
-
-        // Separator-insensitive fallback, so "#Dropy-3977", "dropy 3977" and
-        // "dropy3977" all find the same row.
-        const norm = (v: string) => v.toLowerCase().replace(/[#\s_-]/g, '');
-        const nq = norm(q);
-        return (
-          r.trackingId.toLowerCase().includes(q) ||
-          r.orderName.toLowerCase().includes(q) ||
-          r.customerName.toLowerCase().includes(q) ||
-          r.items.toLowerCase().includes(q) ||
-          norm(r.trackingId).includes(nq) ||
-          norm(r.orderName).includes(nq) ||
-          norm(r.customerName).includes(nq)
-        );
-      }
-      return true;
-    });
-  }, [hasDropdownFilters, browseRows, allRows, query, statusFilter, accountFilter, dateRange]);
+  // No client-side filtering left: the server returned exactly the rows that
+  // match, already sorted and already paged.
+  const filtered = browseRows;
 
   // In search mode, paginate the (already filtered) in-memory results at the
   // same page size browse mode uses, so the table always shows ~20 rows.
-  const searchPageCount = Math.max(1, Math.ceil(filtered.length / BROWSE_PAGE_SIZE));
-  const clampedSearchPage = Math.min(searchPage, searchPageCount - 1);
-  const pageRows = hasDropdownFilters
-    ? filtered.slice(clampedSearchPage * BROWSE_PAGE_SIZE, (clampedSearchPage + 1) * BROWSE_PAGE_SIZE)
-    : filtered;
+  // One page model: the server reports matchCount, and browseTotal already
+  // holds it.
+  const pageRows = filtered;
 
   // After a successful assign, patch that row in whichever list is on screen
   // rather than refetching the page: the sheet write has already happened, and
@@ -456,7 +462,6 @@ export function DeliveryTable() {
     const patch = (rows: DeliveryRow[]) =>
       rows.map((row) => (row.trackingId === trackingId ? { ...row, orderName } : row));
     setBrowseRows(patch);
-    setAllRows(patch);
   }
 
   function clearFilters() {
@@ -469,7 +474,8 @@ export function DeliveryTable() {
   function onFilterChange<T>(setter: (v: T) => void) {
     return (v: T) => {
       setter(v);
-      setSearchPage(0);
+      // Back to page 1: page 4 of the old result set may not exist in the new.
+      setBrowsePage(0);
     };
   }
 
@@ -478,12 +484,7 @@ export function DeliveryTable() {
   const setAccountFilterAndResetPage = onFilterChange(setAccountFilter);
   const setDateRangeAndResetPage = onFilterChange(setDateRange);
 
-  // Bug this fixes: with allRows.length === 0 in the condition, "no matches"
-  // would flash on screen the instant the first chunk (500 of e.g. 1880 rows)
-  // landed and didn't contain a match yet — even though the background fetch
-  // was still running and hadn't seen the rest of the sheet. searchLoading
-  // alone is the correct signal for "the full-dataset fetch isn't done yet".
-  const isSearchStillLoading = hasDropdownFilters && searchLoading;
+  const isSearchStillLoading = false;
 
   return (
     <div>
@@ -565,25 +566,6 @@ export function DeliveryTable() {
           its own) — measured at ~5s per 500-row chunk against the live endpoint,
           so ~10-15s for 2.5k rows. A determinate bar makes that wait legible
           instead of looking hung, and matches stream in as chunks land. */}
-      {hasDropdownFilters && searchLoading && (
-        <div className="mt-2">
-          <div className="tabular flex items-center justify-between text-xs text-muted">
-            <span>
-              <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden />
-              Scanning all deliveries… {allRows.length}
-              {searchTotal !== null ? ` of ${searchTotal}` : ''} loaded
-            </span>
-            {searchTotal ? <span className="text-faint">{Math.round((allRows.length / searchTotal) * 100)}%</span> : null}
-          </div>
-          <div className="mt-1 h-0.5 w-full overflow-hidden rounded-full bg-raised">
-            <div
-              className="h-full rounded-full bg-accent transition-[width] duration-300"
-              style={{ width: searchTotal ? `${Math.min(100, (allRows.length / searchTotal) * 100)}%` : '10%' }}
-            />
-          </div>
-        </div>
-      )}
-
       {error && <p className="mb-3 mt-3 text-sm text-red">{error}</p>}
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-panel shadow-card">
@@ -613,12 +595,12 @@ export function DeliveryTable() {
               <th className="px-3 py-2.5 font-medium">Dispatch</th>
               <th className="px-3 py-2.5 font-medium">Tracking ID</th>
               <th className="px-3 py-2.5 font-medium">Order</th>
-              <th className="px-3 py-2.5 font-medium">Customer</th>
-              <th className="px-3 py-2.5 font-medium">Status</th>
+              <th className="px-3 py-2.5 font-medium"><SortHeader label="Customer" by="customer" sort={sort} onSort={toggleSort} /></th>
+              <th className="px-3 py-2.5 font-medium"><SortHeader label="Status" by="status" sort={sort} onSort={toggleSort} /></th>
               <th className="px-3 py-2.5 font-medium">Status changed</th>
               <th className="px-3 py-2.5 font-medium">Drive account</th>
-              <th className="px-3 py-2.5 font-medium">Added</th>
-              <th className="px-3 py-2.5 text-right font-medium">Total</th>
+              <th className="px-3 py-2.5 font-medium"><SortHeader label="Added" by="added" sort={sort} onSort={toggleSort} /></th>
+              <th className="px-3 py-2.5 font-medium"><SortHeader label="Total" by="total" sort={sort} onSort={toggleSort} align="right" /></th>
               <th className="px-3 py-2.5 font-medium">Items</th>
             </tr>
           </thead>
@@ -815,15 +797,7 @@ export function DeliveryTable() {
             {pageRows.length === 0 && !(browseLoading && !hasDropdownFilters) && (
               <tr>
                 <td colSpan={11} className="px-3 py-12 text-center">
-                  {isSearchStillLoading ? (
-                    <>
-                      <div className="text-sm text-ink">Searching all deliveries…</div>
-                      <div className="tabular mt-1 text-xs text-muted">
-                        {allRows.length}
-                        {searchTotal !== null ? ` of ${searchTotal}` : ''} rows scanned, no match yet
-                      </div>
-                    </>
-                  ) : hasActiveFilters ? (
+                  {hasActiveFilters ? (
                     <>
                       <div className="text-sm text-ink">No deliveries match these filters.</div>
                       <button
@@ -850,21 +824,18 @@ export function DeliveryTable() {
           search mode slices rows already in memory. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {(() => {
-          const inSearch = hasDropdownFilters;
-          const page = inSearch ? clampedSearchPage : browsePage;
-          const pageCount = inSearch
-            ? searchPageCount
-            : browseTotal !== null
-              ? Math.max(1, Math.ceil(browseTotal / BROWSE_PAGE_SIZE))
-              : null;
+          // One page model. browseTotal is matchCount when anything is
+          // filtered and the sheet total otherwise, so the same arithmetic
+          // works either way and there is no second mode to keep in step.
+          const page = browsePage;
+          const pageCount = browseTotal !== null ? Math.max(1, Math.ceil(browseTotal / BROWSE_PAGE_SIZE)) : null;
           const setPage = (p: number) => {
             const next = pageCount ? Math.max(0, Math.min(pageCount - 1, p)) : Math.max(0, p);
-            if (inSearch) setSearchPage(next);
-            else setBrowsePage(next);
+            setBrowsePage(next);
           };
-          const busy = !inSearch && browseLoading;
+          const busy = browseLoading;
           const atStart = page === 0;
-          const atEnd = inSearch ? page >= searchPageCount - 1 : !browseHasMore;
+          const atEnd = !browseHasMore;
           const btn =
             'rounded-lg border border-border bg-panel px-2.5 py-1.5 text-xs text-ink shadow-sm transition-colors hover:border-border-strong hover:bg-raised disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-panel';
 
@@ -908,11 +879,11 @@ export function DeliveryTable() {
               </span>
 
               <span className="tabular text-xs text-faint">
-                {inSearch
-                  ? `${filtered.length} match${filtered.length === 1 ? '' : 'es'}${searchLoading ? ' so far' : ''}`
-                  : browseTotal !== null
-                    ? `${browseTotal.toLocaleString()} deliveries`
-                    : ''}
+                {browseTotal !== null
+                  ? `${browseTotal.toLocaleString()} ${hasActiveFilters ? 'matching ' : ''}deliver${
+                      browseTotal === 1 ? 'y' : 'ies'
+                    }`
+                  : ''}
               </span>
               {busy && <span className="text-xs text-faint">loading…</span>}
             </>

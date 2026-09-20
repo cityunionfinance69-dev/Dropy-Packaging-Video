@@ -45,6 +45,10 @@ export type DeliveriesResponse = {
   matchCount?: number;
   /** True when the server applied a search rather than returning a plain page. */
   searched?: boolean;
+  /** True when the server applied a status/account/date filter. */
+  filtered?: boolean;
+  sort?: string;
+  dir?: string;
   offset: number;
   limit: number;
   hasMore: boolean;
@@ -224,12 +228,33 @@ async function fetchJson<T>(url: string, timeoutMs = 30_000): Promise<T> {
   }
 }
 
-export async function fetchDeliveries(offset: number, limit: number, q = ''): Promise<DeliveriesResponse> {
+export type DeliveryQuery = {
+  q?: string;
+  status?: string;
+  account?: string;
+  days?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+};
+
+export async function fetchDeliveries(
+  offset: number,
+  limit: number,
+  opts: DeliveryQuery | string = {}
+): Promise<DeliveriesResponse> {
+  // A bare string stays valid so existing callers keep working.
+  const o: DeliveryQuery = typeof opts === 'string' ? { q: opts } : opts;
+
   const base = requireEnv('DROPPY_MAIN_URL');
   const key = requireEnv('DROPPY_ADMIN_KEY');
   const url =
     `${base}?action=dashboardData&key=${encodeURIComponent(key)}&offset=${offset}&limit=${limit}` +
-    (q ? `&q=${encodeURIComponent(q)}` : '');
+    (o.q ? `&q=${encodeURIComponent(o.q)}` : '') +
+    (o.status ? `&status=${encodeURIComponent(o.status)}` : '') +
+    (o.account ? `&account=${encodeURIComponent(o.account)}` : '') +
+    (o.days ? `&days=${o.days}` : '') +
+    (o.sort ? `&sort=${encodeURIComponent(o.sort)}&dir=${o.dir === 'asc' ? 'asc' : 'desc'}` : '');
+
   return fetchJson<DeliveriesResponse>(url);
 }
 
